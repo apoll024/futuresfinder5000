@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="refresh" content="60">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FuturesFinder5000</title>
+  <style>
+    :root {
+      --bg: #0d0f14; --surface: #161b22; --border: #30363d;
+      --text: #c9d1d9; --muted: #8b949e;
+      --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', monospace; font-size: 14px; }
+
+    header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 18px; color: var(--blue); letter-spacing: 1px; }
+    .badges { display: flex; gap: 10px; align-items: center; }
+    .badge {
+      padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: bold;
+      border: 1px solid var(--border);
+    }
+    .badge.green  { background: #1a2e1a; color: var(--green); border-color: var(--green); }
+    .badge.red    { background: #2e1a1a; color: var(--red);   border-color: var(--red); }
+    .badge.yellow { background: #2e2a1a; color: var(--yellow);border-color: var(--yellow); }
+    .badge.blue   { background: #1a2030; color: var(--blue);  border-color: var(--blue); }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 20px 24px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .card h2 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+    .stat-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .stat-row:last-child { border-bottom: none; }
+
+    .positive { color: var(--green); }
+    .negative { color: var(--red); }
+    .pnl-big { font-size: 28px; font-weight: bold; text-align: center; padding: 8px 0; }
+
+    /* Signals grid */
+    .signals-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px; padding: 0 24px 20px;
+    }
+    .signal-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px; position: relative;
+    }
+    .signal-card.buy  { border-left: 3px solid var(--green); }
+    .signal-card.sell { border-left: 3px solid var(--red); }
+    .signal-card.hold { border-left: 3px solid var(--muted); }
+
+    .signal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .signal-symbol { font-size: 16px; font-weight: bold; }
+    .signal-action { font-size: 13px; font-weight: bold; padding: 2px 8px; border-radius: 4px; }
+    .signal-action.buy  { background: #1a2e1a; color: var(--green); }
+    .signal-action.sell { background: #2e1a1a; color: var(--red); }
+    .signal-action.hold { background: #1e1e1e; color: var(--muted); }
+
+    .conf-bar { height: 4px; background: var(--border); border-radius: 2px; margin: 6px 0; }
+    .conf-fill { height: 100%; border-radius: 2px; }
+    .conf-fill.buy  { background: var(--green); }
+    .conf-fill.sell { background: var(--red); }
+    .conf-fill.hold { background: var(--muted); }
+
+    .signal-reasoning { font-size: 12px; color: var(--muted); line-height: 1.4; margin-top: 6px; }
+    .signal-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 8px; }
+
+    .indic-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .indic { font-size: 11px; background: #1e2430; padding: 2px 6px; border-radius: 3px; }
+
+    /* Trades table */
+    .section { padding: 0 24px 20px; }
+    .section h2 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }
+    th { background: #0d0f14; color: var(--muted); font-size: 11px; text-transform: uppercase; padding: 8px 12px; text-align: left; }
+    td { padding: 8px 12px; border-top: 1px solid var(--border); font-size: 13px; }
+    td.buy  { color: var(--green); font-weight: bold; }
+    td.sell { color: var(--red); font-weight: bold; }
+    td.suggest { color: var(--yellow); }
+    td.submitted { color: var(--blue); }
+    td.filled { color: var(--green); }
+
+    .timestamp { color: var(--muted); font-size: 11px; text-align: right; padding: 12px 24px; }
+    .no-data { color: var(--muted); font-style: italic; padding: 12px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ FuturesFinder5000</h1>
+  <div class="badges">
+    <span class="badge {{ 'green' if ollama_ok else 'red' }}">
+      LLM {{ '✓ Online' if ollama_ok else '✗ Offline' }}
+    </span>
+    <span class="badge {{ 'green' if market_open else 'yellow' }}">
+      Market {{ 'Open' if market_open else 'Closed' }}
+    </span>
+    <span class="badge {{ 'blue' if trade_mode == 'suggest' else 'yellow' if trade_mode == 'paper' else 'red' }}">
+      Mode: {{ trade_mode.upper() }}
+    </span>
+  </div>
+</header>
+
+<!-- Stats row -->
+<div class="grid" style="grid-template-columns: 1fr 1fr 1fr; margin-top:4px;">
+  <div class="card">
+    <h2>Daily P&amp;L</h2>
+    <div class="pnl-big {{ stats.pnl_class }}">${{ stats.pnl }}</div>
+  </div>
+  <div class="card">
+    <h2>Today's Activity</h2>
+    <div class="stat-row"><span>Signals generated</span><span>{{ stats.signals_today }}</span></div>
+    <div class="stat-row"><span>Trade actions</span><span>{{ stats.trades_today }}</span></div>
+    <div class="stat-row"><span>Buy signals</span><span class="positive">{{ stats.buys }}</span></div>
+    <div class="stat-row"><span>Sell signals</span><span class="negative">{{ stats.sells }}</span></div>
+  </div>
+  <div class="card">
+    <h2>Bar Database</h2>
+    {% for sym, count in bar_counts.items() %}
+    <div class="stat-row"><span>{{ sym }}</span><span>{{ "{:,}".format(count) }} bars</span></div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Live signals -->
+<div style="padding: 4px 24px 8px;">
+  <h2 style="font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:1px;">Latest Signals</h2>
+</div>
+<div class="signals-grid">
+  {% for s in signals %}
+  <div class="signal-card {{ s.action }}">
+    <div class="signal-header">
+      <span class="signal-symbol">{{ s.symbol }}</span>
+      <span class="signal-action {{ s.action }}">{{ s.action.upper() }}</span>
+    </div>
+    <div class="conf-bar">
+      <div class="conf-fill {{ s.action }}" style="width: {{ s.confidence }}%"></div>
+    </div>
+    <div class="indic-row">
+      {% if s.indicators.close %}<span class="indic">${{ s.indicators.close }}</span>{% endif %}
+      {% if s.indicators.vwap  %}<span class="indic">VWAP ${{ s.indicators.vwap }}</span>{% endif %}
+      {% if s.indicators.rsi_9 %}<span class="indic">RSI {{ s.indicators.rsi_9 }}</span>{% endif %}
+      {% if s.indicators.volume_ratio %}<span class="indic">Vol {{ s.indicators.volume_ratio }}x</span>{% endif %}
+      {% if s.indicators.or_breakout %}<span class="indic">OR: {{ s.indicators.or_breakout }}</span>{% endif %}
+    </div>
+    <div class="signal-reasoning">{{ s.reasoning[:160] }}</div>
+    <div class="signal-meta">
+      <span>Conf: {{ s.confidence }}%</span>
+      <span>{{ s.ts }}{% if s.acted_on %} ✓{% endif %}</span>
+    </div>
+  </div>
+  {% else %}
+  <div class="no-data">No signals yet — waiting for market open and enough bars.</div>
+  {% endfor %}
+</div>
+
+<!-- Recent trades -->
+<div class="section">
+  <h2>Recent Trades / Suggestions</h2>
+  {% if trades %}
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Value</th><th>Mode</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for t in trades %}
+      <tr>
+        <td>{{ t.ts }}</td>
+        <td><strong>{{ t.symbol }}</strong></td>
+        <td class="{{ t.side }}">{{ t.side.upper() }}</td>
+        <td>{{ t.qty }}</td>
+        <td>${{ t.price }}</td>
+        <td>${{ t.value }}</td>
+        <td class="{{ t.mode }}">{{ t.mode }}</td>
+        <td class="{{ t.status }}">{{ t.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="no-data">No trades yet.</div>
+  {% endif %}
+</div>
+
+<div class="timestamp">Last updated: {{ now }} &nbsp;·&nbsp; Auto-refresh every 60s</div>
+</body>
+</html>
