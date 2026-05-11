@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgres:15
+    container_name: ff_db
+    environment:
+      POSTGRES_DB: futuresfinder
+      POSTGRES_USER: ff_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    container_name: ff_ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  ingest:
+    build: .
+    container_name: ff_ingest
+    command: python ingest/realtime.py
+    environment:
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER=${ALPACA_PAPER:-true}
+      - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+      - SYMBOLS=${SYMBOLS:-AAPL,TSLA,SPY,QQQ}
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: ff_api
+    command: python api/app.py
+    ports:
+      - "5001:5001"
+    environment:
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER=${ALPACA_PAPER:-true}
+      - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+      - LLM_API_URL=http://ollama:11434/v1/chat/completions
+      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b}
+      - TRADE_MODE=${TRADE_MODE:-suggest}
+      - SYMBOLS=${SYMBOLS:-AAPL,TSLA,SPY,QQQ}
+      - MAX_POSITION_USD=${MAX_POSITION_USD:-500}
+      - MAX_DAILY_LOSS_USD=${MAX_DAILY_LOSS_USD:-200}
+      - MAX_OPEN_POSITIONS=${MAX_OPEN_POSITIONS:-5}
+    depends_on:
+      - db
+      - ollama
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  ollama_data:
