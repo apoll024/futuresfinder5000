@@ -1,6 +1,6 @@
 """
 Database schema and helpers using SQLAlchemy.
-Tables: bars (OHLCV), signals (LLM analysis), trades (executed orders)
+Tables: bars (OHLCV), signals (LLM analysis), trades (executed orders), settings (runtime config)
 """
 import os
 from datetime import datetime
@@ -39,27 +39,63 @@ class Signal(Base):
     id         = Column(Integer, primary_key=True, autoincrement=True)
     symbol     = Column(String(10), nullable=False)
     ts         = Column(DateTime, default=datetime.utcnow)
-    action     = Column(String(10))   # buy | sell | hold
-    confidence = Column(Float)        # 0.0 - 1.0
+    action     = Column(String(10))
+    confidence = Column(Float)
     reasoning  = Column(Text)
-    indicators = Column(Text)         # JSON snapshot of RSI/MACD/EMA at signal time
+    indicators = Column(Text)
     acted_on   = Column(Boolean, default=False)
 
 
 class Trade(Base):
     """Executed or suggested trade record."""
     __tablename__ = "trades"
-    id           = Column(Integer, primary_key=True, autoincrement=True)
-    symbol       = Column(String(10), nullable=False)
-    ts           = Column(DateTime, default=datetime.utcnow)
-    side         = Column(String(5))    # buy | sell
-    qty          = Column(Float)
-    price        = Column(Float)
-    mode         = Column(String(10))   # suggest | paper | live
-    alpaca_id    = Column(String(50))   # order ID if submitted
-    status       = Column(String(20))   # suggested | submitted | filled | rejected
-    signal_id    = Column(Integer)
+    id        = Column(Integer, primary_key=True, autoincrement=True)
+    symbol    = Column(String(10), nullable=False)
+    ts        = Column(DateTime, default=datetime.utcnow)
+    side      = Column(String(5))
+    qty       = Column(Float)
+    price     = Column(Float)
+    mode      = Column(String(10))
+    alpaca_id = Column(String(50))
+    status    = Column(String(20))
+    signal_id = Column(Integer)
+
+
+class Setting(Base):
+    """Runtime configuration — persisted in DB so UI controls take effect immediately."""
+    __tablename__ = "settings"
+    key   = Column(String(50), primary_key=True)
+    value = Column(Text)
+
+
+def get_setting(key: str, default: str = "") -> str:
+    session = Session()
+    row = session.query(Setting).filter(Setting.key == key).first()
+    session.close()
+    return row.value if row else default
+
+
+def set_setting(key: str, value: str):
+    session = Session()
+    row = session.query(Setting).filter(Setting.key == key).first()
+    if row:
+        row.value = value
+    else:
+        session.add(Setting(key=key, value=value))
+    session.commit()
+    session.close()
 
 
 def init_db():
     Base.metadata.create_all(engine)
+    # Seed defaults if not set
+    session = Session()
+    defaults = {
+        "trade_mode": os.getenv("TRADE_MODE", "suggest"),
+        "symbols":    os.getenv("SYMBOLS", "TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX"),
+    }
+    for k, v in defaults.items():
+        if not session.query(Setting).filter(Setting.key == k).first():
+            session.add(Setting(key=k, value=v))
+    session.commit()
+    session.close()
