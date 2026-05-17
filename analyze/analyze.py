@@ -204,6 +204,7 @@ def run_analysis(symbol: str):
         confidence=result.get("confidence", 0.0),
         reasoning=result.get("reasoning", ""),
         indicators=json.dumps(indicators),
+        entry_price=indicators.get("close"),   # captured now for EOD settlement
     )
     session.add(sig)
     session.commit()
