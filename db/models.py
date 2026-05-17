@@ -1,6 +1,6 @@
 """
 Database schema and helpers using SQLAlchemy.
-Tables: bars (OHLCV), signals (LLM analysis), trades (executed orders), settings (runtime config)
+Tables: bars (OHLCV), signals (LLM analysis + outcomes), trades (executed orders), settings (runtime config)
 """
 import os
 from datetime import datetime
@@ -34,16 +34,23 @@ class Bar(Base):
 
 
 class Signal(Base):
-    """LLM-generated trade signal."""
+    """LLM-generated trade signal + post-trade outcome for model training."""
     __tablename__ = "signals"
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    symbol     = Column(String(10), nullable=False)
-    ts         = Column(DateTime, default=datetime.utcnow)
-    action     = Column(String(10))
-    confidence = Column(Float)
-    reasoning  = Column(Text)
-    indicators = Column(Text)
-    acted_on   = Column(Boolean, default=False)
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    symbol      = Column(String(10), nullable=False)
+    ts          = Column(DateTime, default=datetime.utcnow)
+    action      = Column(String(10))   # buy | sell | hold
+    confidence  = Column(Float)
+    reasoning   = Column(Text)
+    indicators  = Column(Text)         # JSON snapshot of all indicators at signal time
+    acted_on    = Column(Boolean, default=False)
+    # Entry / exit for outcome calculation
+    entry_price = Column(Float)        # close price at signal generation time
+    exit_price  = Column(Float)        # EOD close price used for settlement
+    exit_time   = Column(DateTime)     # timestamp of settlement
+    outcome_pct = Column(Float)        # % gain (+) or loss (-) from signal perspective
+    was_correct = Column(Boolean)      # True if outcome_pct > 0
+    settled     = Column(Boolean, default=False)
 
 
 class Trade(Base):
@@ -88,7 +95,6 @@ def set_setting(key: str, value: str):
 
 def init_db():
     Base.metadata.create_all(engine)
-    # Seed defaults if not set
     session = Session()
     defaults = {
         "trade_mode": os.getenv("TRADE_MODE", "suggest"),
