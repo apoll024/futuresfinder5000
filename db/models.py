@@ -1,6 +1,6 @@
 """
-Database schema and helpers using SQLAlchemy.
-Tables: bars (OHLCV), signals (LLM analysis + outcomes), trades (executed orders), settings (runtime config)
+Database schema and helpers.
+Tables: bars (OHLCV), signals (LLM analysis + outcomes), trades, settings, health_metrics
 """
 import os
 from datetime import datetime
@@ -34,22 +34,21 @@ class Bar(Base):
 
 
 class Signal(Base):
-    """LLM-generated trade signal + post-trade outcome for model training."""
+    """LLM-generated trade signal + post-trade outcome for XGBoost training."""
     __tablename__ = "signals"
     id          = Column(Integer, primary_key=True, autoincrement=True)
     symbol      = Column(String(10), nullable=False)
     ts          = Column(DateTime, default=datetime.utcnow)
-    action      = Column(String(10))   # buy | sell | hold
+    action      = Column(String(10))
     confidence  = Column(Float)
     reasoning   = Column(Text)
-    indicators  = Column(Text)         # JSON snapshot of all indicators at signal time
+    indicators  = Column(Text)
     acted_on    = Column(Boolean, default=False)
-    # Entry / exit for outcome calculation
-    entry_price = Column(Float)        # close price at signal generation time
-    exit_price  = Column(Float)        # EOD close price used for settlement
-    exit_time   = Column(DateTime)     # timestamp of settlement
-    outcome_pct = Column(Float)        # % gain (+) or loss (-) from signal perspective
-    was_correct = Column(Boolean)      # True if outcome_pct > 0
+    entry_price = Column(Float)
+    exit_price  = Column(Float)
+    exit_time   = Column(DateTime)
+    outcome_pct = Column(Float)
+    was_correct = Column(Boolean)
     settled     = Column(Boolean, default=False)
 
 
@@ -69,10 +68,22 @@ class Trade(Base):
 
 
 class Setting(Base):
-    """Runtime configuration — persisted in DB so UI controls take effect immediately."""
+    """Runtime configuration — persisted so dashboard controls take effect immediately."""
     __tablename__ = "settings"
     key   = Column(String(50), primary_key=True)
     value = Column(Text)
+
+
+class HealthMetric(Base):
+    """Container and system resource metrics written by watchdog every 5 minutes."""
+    __tablename__ = "health_metrics"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    ts          = Column(DateTime, default=datetime.utcnow, index=True)
+    metric_type = Column(String(20))   # cpu | mem | disk | container
+    name        = Column(String(50))   # container name or volume path
+    value       = Column(Float)        # percentage or 0/1 for container liveness
+    status      = Column(String(10))   # ok | warn | critical
+    note        = Column(Text)
 
 
 def get_setting(key: str, default: str = "") -> str:
