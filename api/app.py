@@ -15,13 +15,14 @@ try:
 except ImportError:
     _DOCKER_AVAILABLE = False
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 from sqlalchemy import func, text
 from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, get_setting, set_setting
 
-app  = Flask(__name__)
-ET   = ZoneInfo("America/New_York")
-LLM_API_URL = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
+app      = Flask(__name__)
+ET       = ZoneInfo("America/New_York")
+LLM_API_URL  = os.getenv("LLM_API_URL",  "http://ollama:11434/v1/chat/completions")
+LLM_MODEL    = os.getenv("LLM_MODEL",    "llama3.1:8b")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -356,6 +357,115 @@ def api_db_stats():
 @app.route("/api/health/latest")
 def api_health_latest():
     return jsonify(resource_stats())
+
+
+def build_chat_context() -> str:
+    """Snapshot of current market state injected into every LLM chat turn."""
+    sigs      = latest_signals(get_symbols())
+    stats     = daily_stats()
+    ingest_st = get_ingest_status()
+    now       = datetime.now(ET)
+    mkt_open  = "09:45" <= now.strftime("%H:%M") <= "15:45"
+
+    sig_lines = "\n".join(
+        f"  {s['symbol']}: {s['action'].upper()} conf={s['confidence']}%"
+        f" last=${s['last_price'] or '—'}"
+        f" bars={s['bar_count']:,}"
+        f" | {(s['reasoning'] or '')[:120]}"
+        for s in sigs
+    )
+
+    return (
+        f"Time: {now.strftime('%Y-%m-%d %H:%M ET')} | "
+        f"Market: {'OPEN' if mkt_open else 'CLOSED'}\n"
+        f"Trade mode: {get_trade_mode()} | "
+        f"Approved capital: ${get_approved_capital():,.0f} | "
+        f"Max position: ${get_max_position():,.0f} | "
+        f"Daily loss limit: ${get_daily_loss_limit():,.0f}\n"
+        f"Ingest: {'running' if ingest_st.get('running') else 'stopped'} | "
+        f"Ollama: {'ok' if ollama_healthy() else 'OFFLINE'}\n"
+        f"Today — P&L: ${stats['pnl']} | "
+        f"Trades: {stats['trades_today']} (B={stats['buys']} S={stats['sells']}) | "
+        f"Signals: {stats['signals_today']}\n"
+        f"Watchlist signals:\n{sig_lines if sig_lines else '  No signals yet'}"
+    )
+
+
+# ── API: chat ─────────────────────────────────────────────────────────────────
+
+CHAT_SYSTEM_PROMPT = """You are FuturesFinder5000's AI trading assistant, running live on an Oracle Cloud VM.
+You have deep expertise in leveraged ETF day trading (TQQQ/SQQQ, UPRO/SPXU, SOXL/SOXS pairs).
+
+You can:
+- Explain your current signals and the reasoning behind them
+- Analyze market conditions and indicator values
+- Suggest strategy adjustments (the user applies them via the dashboard)
+- Answer questions about specific positions, risk levels, or trade history
+- Discuss what you're watching and why
+
+Key rules you always follow:
+- Never hold leveraged ETFs overnight (daily decay)
+- VWAP on the underlying (QQQ, SPY, SOXX) is the primary entry signal
+- Volume ratio > 1.5 confirms moves; < 0.8 = avoid new entries
+- Opening range first 15 min = no new entries
+- < 30 min left in session = exits only
+
+At the start of each message you are given a live snapshot of current market state — use it to give specific, grounded answers. Be direct and concise. Cite actual values."""
+
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    data     = request.json or {}
+    user_msg = data.get("message", "").strip()
+    history  = data.get("history", [])   # [{role, content}, ...]
+
+    if not user_msg:
+        return jsonify({"error": "No message"}), 400
+
+    ctx = build_chat_context()
+    system_content = CHAT_SYSTEM_PROMPT + f"\n\n--- Live market snapshot ---\n{ctx}\n---"
+
+    messages = (
+        [{"role": "system", "content": system_content}]
+        + history[-20:]   # keep last 20 turns to bound context length
+        + [{"role": "user", "content": user_msg}]
+    )
+
+    def generate():
+        try:
+            r = requests.post(
+                LLM_API_URL,
+                headers={"Content-Type": "application/json"},
+                json={"model": LLM_MODEL, "messages": messages,
+                      "stream": True, "temperature": 0.25, "max_tokens": 1024},
+                stream=True, timeout=120,
+            )
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                decoded = line.decode("utf-8")
+                if not decoded.startswith("data: "):
+                    continue
+                chunk = decoded[6:]
+                if chunk.strip() == "[DONE]":
+                    yield "data: [DONE]\n\n"
+                    return
+                try:
+                    obj   = json.loads(chunk)
+                    delta = obj["choices"][0]["delta"].get("content", "")
+                    if delta:
+                        yield f"data: {json.dumps({'content': delta})}\n\n"
+                except Exception:
+                    pass
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return Response(stream_with_context(generate()),
+                    content_type="text/event-stream",
+                    headers={"X-Accel-Buffering": "no",
+                             "Cache-Control": "no-cache"})
 
 
 if __name__ == "__main__":
