@@ -1,0 +1,140 @@
+"""
+Resource watchdog — polls every 5 minutes and writes metrics to health_metrics table.
+
+Monitors:
+  - CPU and RAM per container (docker stats)
+  - Disk usage on /var/lib/docker (Postgres data + Ollama models)
+  - Container liveness (auto-restarts stopped containers)
+
+Alert thresholds: warn >= 80%, critical >= 92%
+All metrics visible in the dashboard via /api/health endpoint.
+"""
+import os, sys, subprocess, json, time
+from datetime import datetime
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from db.models import init_db, Session, HealthMetric
+
+POLL_INTERVAL      = 300
+WARN_PCT           = 80.0
+CRITICAL_PCT       = 92.0
+WATCHED_CONTAINERS = ["ff_db", "ff_ollama", "ff_ingest", "ff_api", "ff_settler"]
+
+
+def docker_stats():
+    try:
+        r = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format",
+             '{"name":"{{.Name}}","cpu":"{{.CPUPerc}}","mem":"{{.MemPerc}}","mem_usage":"{{.MemUsage}}"}'],
+            capture_output=True, text=True, timeout=30
+        )
+        out = []
+        for line in r.stdout.strip().splitlines():
+            try:
+                d = json.loads(line)
+                d["cpu_pct"] = float(d["cpu"].replace("%", ""))
+                d["mem_pct"] = float(d["mem"].replace("%", ""))
+                out.append(d)
+            except Exception:
+                pass
+        return out
+    except Exception as e:
+        print(f"[watchdog] docker stats error: {e}")
+        return []
+
+
+def disk_pct(path="/var/lib/docker"):
+    try:
+        r = subprocess.run(["df", "--output=pcent", path],
+                           capture_output=True, text=True, timeout=10)
+        lines = r.stdout.strip().splitlines()
+        if len(lines) >= 2:
+            return float(lines[1].strip().replace("%", ""))
+    except Exception:
+        pass
+    return 0.0
+
+
+def running_containers():
+    try:
+        r = subprocess.run(["docker", "ps", "--format", "{{.Names}}"],
+                           capture_output=True, text=True, timeout=10)
+        return set(r.stdout.strip().splitlines())
+    except Exception:
+        return set()
+
+
+def restart_container(name):
+    print(f"[watchdog] Restarting {name}...")
+    try:
+        subprocess.run(["docker", "restart", name], timeout=60, check=True)
+        print(f"[watchdog] {name} restarted OK")
+    except Exception as e:
+        print(f"[watchdog] Failed to restart {name}: {e}")
+
+
+def write_metric(session, mtype, name, value, status, note=""):
+    session.add(HealthMetric(
+        ts=datetime.utcnow(), metric_type=mtype,
+        name=name, value=value, status=status, note=note
+    ))
+
+
+def run_checks():
+    session = Session()
+    alerts  = []
+
+    for stat in docker_stats():
+        name = stat["name"]
+        cpu  = stat["cpu_pct"]
+        mem  = stat["mem_pct"]
+        mem_label = stat.get("mem_usage", "")
+
+        cpu_status = "critical" if cpu >= CRITICAL_PCT else "warn" if cpu >= WARN_PCT else "ok"
+        mem_status = "critical" if mem >= CRITICAL_PCT else "warn" if mem >= WARN_PCT else "ok"
+
+        write_metric(session, "cpu", name, cpu, cpu_status, mem_label)
+        write_metric(session, "mem", name, mem, mem_status, mem_label)
+
+        if cpu_status != "ok": alerts.append(f"{cpu_status.upper()}: {name} CPU {cpu:.1f}%")
+        if mem_status != "ok": alerts.append(f"{mem_status.upper()}: {name} RAM {mem:.1f}%")
+
+    d = disk_pct()
+    d_status = "critical" if d >= CRITICAL_PCT else "warn" if d >= WARN_PCT else "ok"
+    write_metric(session, "disk", "docker_volume", d, d_status)
+    if d_status != "ok": alerts.append(f"{d_status.upper()}: disk {d:.1f}%")
+
+    running = running_containers()
+    for name in WATCHED_CONTAINERS:
+        if name not in running:
+            alerts.append(f"CRITICAL: {name} NOT running — restarting")
+            write_metric(session, "container", name, 0, "critical", "not running")
+            restart_container(name)
+        else:
+            write_metric(session, "container", name, 1, "ok", "running")
+
+    session.commit()
+    session.close()
+
+    ts = datetime.now().strftime("%H:%M:%S")
+    if alerts:
+        print(f"\n[watchdog] === ALERTS {ts} ===")
+        for a in alerts: print(f"  {a}")
+    else:
+        print(f"[watchdog] {ts} OK | disk={d:.1f}% | containers: {len(running & set(WATCHED_CONTAINERS))}/{len(WATCHED_CONTAINERS)}")
+
+
+def run():
+    print("[watchdog] Resource monitor started (interval: 5 min)")
+    init_db()
+    while True:
+        try:
+            run_checks()
+        except Exception as e:
+            print(f"[watchdog] Check failed (non-fatal): {e}")
+        time.sleep(POLL_INTERVAL)
+
+
+if __name__ == "__main__":
+    run()
