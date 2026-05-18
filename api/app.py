@@ -22,7 +22,7 @@ from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, Knowle
 app      = Flask(__name__)
 ET       = ZoneInfo("America/New_York")
 LLM_API_URL  = os.getenv("LLM_API_URL",  "http://ollama:11434/v1/chat/completions")
-LLM_MODEL    = os.getenv("LLM_MODEL",    "llama3.1:8b")
+LLM_MODEL    = os.getenv("LLM_MODEL",    "llama3.2:3b")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
