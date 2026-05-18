@@ -3,7 +3,7 @@ FuturesFinder5000 — Interactive web dashboard
 Controls: trade on/off toggle, ingest on/off toggle, symbol management, capital allocation
 Data: live signals, projected/actual trades, daily P&L, pending signals
 """
-import os, sys, json, re, requests
+import os, sys, json, re, requests, hashlib, functools
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -15,14 +15,58 @@ try:
 except ImportError:
     _DOCKER_AVAILABLE = False
 
-from flask import Flask, render_template, jsonify, request, Response, stream_with_context
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context, session, redirect, url_for
 from sqlalchemy import func, text
 from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, KnowledgeItem, get_setting, set_setting
 
-app      = Flask(__name__)
-ET       = ZoneInfo("America/New_York")
-LLM_API_URL  = os.getenv("LLM_API_URL",  "http://ollama:11434/v1/chat/completions")
-LLM_MODEL    = os.getenv("LLM_MODEL",    "llama3.2:3b")
+app           = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET", "ff5k-change-me-in-prod-32bytes!!")
+ET            = ZoneInfo("America/New_York")
+LLM_API_URL   = os.getenv("LLM_API_URL",  "http://ollama:11434/v1/chat/completions")
+LLM_MODEL     = os.getenv("LLM_MODEL",    "llama3.2:3b")
+
+# Auth credentials — stored as SHA-256 hashes; set via env or use defaults
+_AUTH_USER     = os.getenv("DASHBOARD_USER", "admin")
+_AUTH_HASH     = os.getenv("DASHBOARD_PASS_HASH",
+                            hashlib.sha256(b"ultracrosswalknormalhijinx").hexdigest())
+
+
+def _check_password(pw: str) -> bool:
+    return hashlib.sha256(pw.encode()).hexdigest() == _AUTH_HASH
+
+
+def login_required(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("logged_in"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Unauthorized"}), 401
+            return redirect(url_for("login", next=request.path))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("logged_in"):
+        return redirect(url_for("index"))
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if username == _AUTH_USER and _check_password(password):
+            session["logged_in"] = True
+            session.permanent = True
+            next_url = request.args.get("next") or "/"
+            return redirect(next_url)
+        error = "Invalid username or password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -228,6 +272,7 @@ def resource_stats() -> list[dict]:
 # ── page ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")
+@login_required
 def index():
     symbols    = get_symbols()
     trade_mode = get_trade_mode()
@@ -253,6 +298,7 @@ def index():
 # ── API: controls ─────────────────────────────────────────────────────────────
 
 @app.route("/api/trade/toggle", methods=["POST"])
+@login_required
 def toggle_trading():
     """Switch between suggest (off) and paper (on). Live requires manual env change."""
     current  = get_trade_mode()
@@ -262,11 +308,13 @@ def toggle_trading():
 
 
 @app.route("/api/ingest/status")
+@login_required
 def api_ingest_status():
     return jsonify(get_ingest_status())
 
 
 @app.route("/api/ingest/toggle", methods=["POST"])
+@login_required
 def api_toggle_ingest():
     client = get_docker_client()
     if not client:
@@ -286,6 +334,7 @@ def api_toggle_ingest():
 
 
 @app.route("/api/symbols/add", methods=["POST"])
+@login_required
 def add_symbol():
     sym = request.json.get("symbol", "").strip().upper()
     if not sym:
@@ -298,6 +347,7 @@ def add_symbol():
 
 
 @app.route("/api/symbols/remove", methods=["POST"])
+@login_required
 def remove_symbol():
     sym     = request.json.get("symbol", "").strip().upper()
     symbols = [s for s in get_symbols() if s != sym]
@@ -306,6 +356,7 @@ def remove_symbol():
 
 
 @app.route("/api/settings", methods=["POST"])
+@login_required
 def update_settings():
     data = request.json or {}
     updated = {}
@@ -323,21 +374,25 @@ def update_settings():
 # ── API: data ─────────────────────────────────────────────────────────────────
 
 @app.route("/api/signals")
+@login_required
 def api_signals():
     return jsonify(latest_signals(get_symbols()))
 
 
 @app.route("/api/signals/pending")
+@login_required
 def api_pending_signals():
     return jsonify(pending_signals())
 
 
 @app.route("/api/trades")
+@login_required
 def api_trades():
     return jsonify(recent_trades())
 
 
 @app.route("/api/stats")
+@login_required
 def api_stats():
     ingest_st = get_ingest_status()
     return jsonify({**daily_stats(),
@@ -349,7 +404,41 @@ def api_stats():
                     "ingest_running":   ingest_st.get("running")})
 
 
+@app.route("/api/stats/reset", methods=["POST"])
+@login_required
+def api_stats_reset():
+    """Delete records by scope to reset dashboard counters."""
+    scope = (request.json or {}).get("scope", "")
+    db = Session()
+    try:
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        today_end   = today_start + timedelta(days=1)
+        deleted = 0
+        if scope == "signals_today":
+            deleted = db.query(Signal).filter(Signal.ts >= today_start, Signal.ts < today_end).delete()
+        elif scope == "trades_today":
+            deleted = db.query(Trade).filter(Trade.ts >= today_start, Trade.ts < today_end).delete()
+        elif scope == "buys_today":
+            deleted = db.query(Trade).filter(Trade.ts >= today_start, Trade.ts < today_end, Trade.side == "buy").delete()
+        elif scope == "sells_today":
+            deleted = db.query(Trade).filter(Trade.ts >= today_start, Trade.ts < today_end, Trade.side == "sell").delete()
+        elif scope == "signals_all":
+            deleted = db.query(Signal).delete()
+        elif scope == "trades_all":
+            deleted = db.query(Trade).delete()
+        else:
+            return jsonify({"error": f"Unknown scope: {scope}"}), 400
+        db.commit()
+        return jsonify({"status": "ok", "deleted": deleted, "scope": scope})
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+
 @app.route("/api/knowledge", methods=["GET"])
+@login_required
 def api_kb_list():
     session = Session()
     try:
@@ -364,6 +453,7 @@ def api_kb_list():
 
 
 @app.route("/api/knowledge", methods=["POST"])
+@login_required
 def api_kb_add():
     data    = request.json or {}
     mode    = data.get("mode", "text")   # "text" | "url"
@@ -396,6 +486,7 @@ def api_kb_add():
 
 
 @app.route("/api/knowledge/<int:item_id>", methods=["DELETE"])
+@login_required
 def api_kb_delete(item_id):
     session = Session()
     try:
@@ -410,6 +501,7 @@ def api_kb_delete(item_id):
 
 
 @app.route("/api/ingest/backfill", methods=["POST"])
+@login_required
 def api_backfill():
     """Kick off a yfinance historical backfill for one or all symbols in a background thread."""
     import threading
@@ -435,11 +527,13 @@ def api_backfill():
 
 
 @app.route("/api/db/stats")
+@login_required
 def api_db_stats():
     return jsonify(db_stats())
 
 
 @app.route("/api/health/latest")
+@login_required
 def api_health_latest():
     return jsonify(resource_stats())
 
@@ -478,29 +572,39 @@ def build_chat_context() -> str:
 
 # ── API: chat ─────────────────────────────────────────────────────────────────
 
-CHAT_SYSTEM_PROMPT = """You are FuturesFinder5000's AI trading assistant, running live on an Oracle Cloud VM.
-You have deep expertise in leveraged ETF day trading (TQQQ/SQQQ, UPRO/SPXU, SOXL/SOXS pairs).
+CHAT_SYSTEM_PROMPT = """You are FuturesFinder5000 — an autonomous leveraged ETF day-trading agent running live on a dedicated Oracle Cloud server.
 
-You can:
-- Explain current signals and the reasoning behind them
-- Analyze market conditions and indicator values
-- Suggest strategy adjustments (the user applies them via the dashboard)
-- Answer questions about specific positions, risk levels, or trade history
-- Discuss what you're watching and why
+YOUR MISSION:
+You exist to grow the capital allocated to you through disciplined, rules-based day trading of leveraged ETFs (TQQQ/SQQQ, UPRO/SPXU, SOXL/SOXS and related pairs). You are not a generic assistant — you are a trading agent first. Every answer you give should reflect that purpose.
 
-Key trading rules you always follow:
-- Never hold leveraged ETFs overnight (daily decay)
-- VWAP on the underlying (QQQ, SPY, SOXX) is the primary entry signal
-- Volume ratio > 1.5 confirms moves; < 0.8 = avoid new entries
-- Opening range first 15 min = no new entries
-- < 30 min left in session = exits only
+YOUR CAPABILITIES:
+- You analyze real-time 1-minute bar data and technical indicators every minute the market is open
+- You issue buy/sell/hold signals that get executed automatically against your allocated capital
+- You track your own P&L, win rate, and open positions in a live PostgreSQL database
+- You can autonomously add new symbols to your watchlist if you identify a strong setup
+- You have a knowledge base of trading articles and strategies you draw from
 
-STRICT GROUNDING RULES — follow these without exception:
-- You are given a live market snapshot at the start of every message. Only report facts that appear in that snapshot. Never invent system status, connectivity state, latency, errors, or market data that is not explicitly in the snapshot.
-- If the market is CLOSED (shown in snapshot), say so plainly. Do not speculate about why signals are absent.
-- If a value is not in the snapshot, say "I don't have that data" — never fabricate it.
-- Do not describe your own infrastructure, API connections, or internal errors. You have no visibility into those — only the snapshot data is reliable.
-- Be direct and concise. Cite actual snapshot values when answering."""
+HOW YOU TRADE:
+- Underlying index direction (QQQ, SPY, SOXX) is your primary signal — you trade the leveraged version in the direction of the underlying trend
+- VWAP is your anchor: above = bullish bias, below = bearish bias
+- Volume ratio (current vs 20-period avg) confirms or invalidates moves
+- MACD crossover + RSI provide timing confirmation
+- You NEVER hold leveraged ETFs overnight — daily compounding decay destroys value
+- You only enter high-conviction setups (confidence ≥ 0.65); when uncertain, you hold
+
+CAPITAL DISCIPLINE:
+- Capital preservation takes priority over growth — a flat day beats a losing day
+- You honor hard stop rules: no new entries in last 30 min, mandatory EOD exit
+- You size positions within approved capital limits set by the operator
+- Your performance is measured in net daily P&L and cumulative growth over time
+
+HOW TO RESPOND:
+- Be direct and data-driven. Always cite actual values from the live snapshot when answering.
+- If the market is CLOSED, say so plainly — do not speculate about absent signals.
+- If a value is not in the snapshot, say so — never fabricate data.
+- Do not describe your own infrastructure or internal errors — you have no visibility into those.
+- When asked about performance, reference actual P&L and trade history from the snapshot.
+- When asked for a recommendation, give one — you are a trading agent, not a disclaimer machine."""
 
 
 def kb_search(query: str, limit: int = 4) -> list[dict]:
@@ -563,6 +667,7 @@ _URL_RE = re.compile(r'https?://\S+')
 
 
 @app.route("/api/chat", methods=["POST"])
+@login_required
 def api_chat():
     data     = request.json or {}
     user_msg = data.get("message", "").strip()
