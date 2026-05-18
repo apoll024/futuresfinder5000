@@ -91,6 +91,8 @@ services:
       - MAX_POSITION_USD=${MAX_POSITION_USD:-500}
       - MAX_DAILY_LOSS_USD=${MAX_DAILY_LOSS_USD:-200}
       - MAX_OPEN_POSITIONS=${MAX_OPEN_POSITIONS:-5}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 768m
     depends_on:
       db:
