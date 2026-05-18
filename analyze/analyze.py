@@ -221,7 +221,7 @@ Respond ONLY with valid JSON:
   "add_symbol": null
 }}
 Note: set add_symbol to a ticker string (e.g. "NVDA") ONLY if you identify a strong
-opportunity in a liquid US equity or ETF not already being tracked. Otherwise null.""""""
+opportunity in a liquid US equity or ETF not already being tracked. Otherwise null."""
 
     r = requests.post(LLM_API_URL,
                       headers={"Content-Type": "application/json"},
