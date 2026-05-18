@@ -16,7 +16,7 @@ Key leveraged ETF rules baked into LLM prompt:
   - Volume spike on leveraged ETF = confirms underlying move
   - Stop implied at opening range low (bull) or high (bear)
 """
-import os, sys, json
+import os, sys, json, threading
 from datetime import datetime, time as dtime
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -27,10 +27,13 @@ import ta.momentum as ta_momentum
 import ta.volatility as ta_vol
 import requests
 from zoneinfo import ZoneInfo
-from db.models import Session, Bar, Signal, init_db
+from db.models import Session, Bar, Signal, Trade, init_db, get_setting, set_setting
 
 LLM_API_URL = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
 MODEL       = os.getenv("LLM_MODEL", "llama3.2:3b")
+TRADE_MODE  = os.getenv("TRADE_MODE", "suggest")
+API_KEY     = os.getenv("ALPACA_API_KEY")
+SECRET_KEY  = os.getenv("ALPACA_SECRET_KEY")
 ET          = ZoneInfo("America/New_York")
 MARKET_OPEN = dtime(9, 30)
 ENTRY_START = dtime(9, 45)
@@ -48,6 +51,44 @@ PAIRS = {
     "TNA":  {"bear": "TZA",  "underlying": "IWM",  "leverage": 3},
     "TZA":  {"bull": "TNA",  "underlying": "IWM",  "leverage": -3},
 }
+
+
+def get_open_position(symbol: str) -> dict | None:
+    """Return today's open position for symbol, or None if flat.
+    In suggest mode: derived from today's trade log.
+    In paper/live mode: queried from Alpaca directly.
+    """
+    if TRADE_MODE != "suggest":
+        try:
+            from alpaca.trading.client import TradingClient
+            client = TradingClient(API_KEY, SECRET_KEY, paper=True)
+            pos = client.get_open_position(symbol)
+            return {"qty": float(pos.qty), "avg_entry": float(pos.avg_entry_price),
+                    "unrealized_pnl": float(pos.unrealized_pl)}
+        except Exception:
+            return None
+    # Suggest mode: net from today's trade log
+    session = Session()
+    try:
+        today_start = datetime.now(ET).replace(hour=0, minute=0, second=0, microsecond=0)
+        trades = session.query(Trade).filter(
+            Trade.symbol == symbol, Trade.ts >= today_start
+        ).all()
+        bought = sum(t.qty for t in trades if t.side == "buy")
+        sold   = sum(t.qty for t in trades if t.side == "sell")
+        net    = bought - sold
+        return {"qty": net, "avg_entry": None, "unrealized_pnl": None} if net > 0 else None
+    finally:
+        session.close()
+
+
+def _backfill_new_symbol(symbol: str):
+    try:
+        from ingest.historical import ingest_historical
+        ingest_historical(symbols_override=[symbol])
+        print(f"  [analyze] Backfill complete for new symbol {symbol}")
+    except Exception as e:
+        print(f"  [analyze] Backfill error for {symbol}: {e}")
 
 
 def market_is_open(allow_entry: bool = True) -> bool:
@@ -125,7 +166,18 @@ def compute_indicators(df: pd.DataFrame) -> dict:
 
 
 def call_llm(symbol: str, indicators: dict, underlying_indicators,
-             recent_closes: list, minutes_left: int, leverage: int) -> dict:
+             recent_closes: list, minutes_left: int, leverage: int,
+             position: dict | None = None) -> dict:
+
+    # Position state
+    if position:
+        entry_str = f" @ ${position['avg_entry']:.2f}" if position.get('avg_entry') else ""
+        pnl_str   = f", unrealized P&L: ${position['unrealized_pnl']:.2f}" if position.get('unrealized_pnl') is not None else ""
+        position_line = f"LONG {int(position['qty'])} shares{entry_str}{pnl_str}"
+        pos_rule      = "FLAT constraint: you hold a LONG position. Action may be 'sell' (exit) or 'hold'. Do NOT use 'buy' to pyramid."
+    else:
+        position_line = "NONE (flat — no open position today)"
+        pos_rule      = "FLAT constraint: you have NO open position. Action MUST be 'buy' or 'hold'. 'sell' is INVALID — you cannot sell what you do not own."
 
     underlying_section = ""
     if underlying_indicators:
@@ -143,6 +195,9 @@ If {und} is below VWAP and trending down -> favor SQQQ/SPXU/SOXS side.
 
     prompt = f"""You are a day trading assistant specializing in leveraged ETFs.
 Analyzing: {symbol} ({leverage:+d}x leveraged ETF) | {minutes_left} minutes left in session.
+
+CURRENT POSITION: {position_line}
+{pos_rule}
 
 CRITICAL RULES:
 1. NEVER hold overnight -- daily decay destroys value; EOD close is mandatory
@@ -162,8 +217,11 @@ Respond ONLY with valid JSON:
 {{
   "action": "buy" | "sell" | "hold",
   "confidence": 0.0-1.0,
-  "reasoning": "cite specific values: VWAP position, OR breakout, volume ratio, underlying direction"
-}}"""
+  "reasoning": "cite specific values: VWAP position, OR breakout, volume ratio, underlying direction",
+  "add_symbol": null
+}}
+Note: set add_symbol to a ticker string (e.g. "NVDA") ONLY if you identify a strong
+opportunity in a liquid US equity or ETF not already being tracked. Otherwise null.""""""
 
     r = requests.post(LLM_API_URL,
                       headers={"Content-Type": "application/json"},
@@ -202,7 +260,8 @@ def run_analysis(symbol: str):
         if len(und_df) >= 10:
             underlying_ind = compute_indicators(und_df)
 
-    result = call_llm(symbol, indicators, underlying_ind, closes, minutes_left, leverage)
+    result = call_llm(symbol, indicators, underlying_ind, closes, minutes_left, leverage,
+                      position=get_open_position(symbol))
 
     session = Session()
     sig = Signal(
@@ -219,6 +278,17 @@ def run_analysis(symbol: str):
     session.close()
 
     print(f"  [{symbol}] {sig.action.upper()} conf={sig.confidence:.2f} | {sig.reasoning[:100]}")
+
+    # Handle dynamic symbol addition
+    new_sym = str(result.get("add_symbol") or "").strip().upper()
+    if new_sym and 1 < len(new_sym) <= 6 and new_sym.isalpha():
+        current = get_setting("symbols")
+        current_list = [s.strip() for s in current.split(",") if s.strip()]
+        if new_sym not in current_list:
+            current_list.append(new_sym)
+            set_setting("symbols", ",".join(current_list))
+            print(f"  [{symbol}] LLM added new symbol to watchlist: {new_sym}")
+            threading.Thread(target=_backfill_new_symbol, args=(new_sym,), daemon=True).start()
 
     from trade.executor import execute_signal
     execute_signal(sig_id)

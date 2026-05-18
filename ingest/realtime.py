@@ -8,7 +8,7 @@ Resilience:
   - Rate limit: one analysis per symbol per 55 seconds (debounce rapid bars)
   - Graceful shutdown on SIGTERM / SIGINT
 """
-import os, sys, time, signal
+import os, sys, time, signal, threading
 from datetime import datetime, time as dtime
 from collections import defaultdict
 from pathlib import Path
@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from alpaca.data.live import StockDataStream
-from db.models import init_db, Session, Bar
+from db.models import init_db, Session, Bar, get_setting
 
 API_KEY    = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
@@ -32,7 +32,9 @@ CIRCUIT_OPEN_AFTER = 3      # failures before backing off
 BACKOFF_SECONDS    = 900    # 15 min
 MIN_ANALYSIS_GAP   = 55     # seconds between analyses per symbol (avoid hammering LLM)
 
-_shutdown = False
+_shutdown    = False
+_stream_ref  = None         # set in run_stream, used by symbol watcher
+_known_syms: set = set()    # tracked set for dynamic additions
 
 
 def _handle_exit(signum, frame):
@@ -91,10 +93,49 @@ async def bar_handler(bar):
 
 
 def run_stream():
+    global _stream_ref, _known_syms
+
+    # Load symbols from DB (may include LLM-added ones since last restart)
+    try:
+        db_syms = [s.strip().upper() for s in get_setting("symbols").split(",") if s.strip()]
+        active = db_syms if db_syms else SYMBOLS
+    except Exception:
+        active = SYMBOLS
+
+    _known_syms = set(active)
     stream = StockDataStream(API_KEY, SECRET_KEY)
-    stream.subscribe_bars(bar_handler, *SYMBOLS)
-    print(f"[ingest] Stream connected | symbols: {SYMBOLS}")
+    _stream_ref = stream
+    stream.subscribe_bars(bar_handler, *active)
+    print(f"[ingest] Stream connected | symbols: {active}")
+
+    # Start symbol watcher to pick up LLM-added symbols dynamically
+    t = threading.Thread(target=_symbol_watcher, daemon=True)
+    t.start()
+
     stream.run()
+
+
+def _symbol_watcher():
+    """Poll DB every 60s for new symbols and subscribe them to the live stream."""
+    global _known_syms
+    while not _shutdown:
+        time.sleep(60)
+        if _stream_ref is None:
+            continue
+        try:
+            db_syms = {s.strip().upper() for s in get_setting("symbols").split(",") if s.strip()}
+            new = db_syms - _known_syms
+            if new:
+                print(f"[ingest] New symbols detected: {new} — subscribing + backfilling")
+                _stream_ref.subscribe_bars(bar_handler, *new)
+                _known_syms |= new
+                try:
+                    from ingest.historical import ingest_historical
+                    ingest_historical(symbols_override=list(new))
+                except Exception as be:
+                    print(f"[ingest] Backfill error for {new}: {be}")
+        except Exception as e:
+            print(f"[ingest] Symbol watcher error: {e}")
 
 
 def main():
