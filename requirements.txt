@@ -1,12 +1,10 @@
 flask>=3.0
-alpaca-py>=0.20
-psycopg2-binary
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+alpaca-py>=0.21
+requests>=2.32
 pandas>=2.2,<3.0
 ta>=0.11.0
-requests
-python-dotenv
-sqlalchemy>=2.0
-apscheduler>=3.10
-websocket-client
 xgboost>=2.0
 scikit-learn>=1.4
+docker>=6.0
