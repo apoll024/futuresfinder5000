@@ -101,7 +101,7 @@ def main():
     print("[ingest] Starting historical backfill...")
     try:
         from ingest.historical import ingest_historical
-        ingest_historical()
+        ingest_historical(symbols_override=SYMBOLS)
     except Exception as e:
         print(f"[ingest] Historical backfill error (non-fatal): {e}")
 

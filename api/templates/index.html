@@ -121,7 +121,7 @@
     /* ── DB / Resource monitor ── */
     .db-stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:4px 24px 16px;}
     .resource-section{padding:0 24px 24px;}
-    .resource-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
+    .resource-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
     .res-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;}
     .res-card.warn {border-left:3px solid var(--yellow);}
     .res-card.critical{border-left:3px solid var(--red);}
@@ -265,6 +265,17 @@
       <button class="btn btn-save" onclick="saveSettings()">Save Limits</button>
     </div>
 
+    <!-- Single-symbol backfill -->
+    <div class="control-group">
+      <label>Backfill History</label>
+      <div class="input-row">
+        <input type="text" id="backfill-sym" placeholder="e.g. TQQQ" maxlength="10"
+               onkeydown="if(event.key==='Enter') triggerBackfill()"
+               style="width:100px;">
+        <button class="btn btn-save" onclick="triggerBackfill()">▼ Fetch</button>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -356,6 +367,27 @@
   {% endfor %}
 </div>
 
+<!-- Chat window -->
+<div class="chat-section">
+  <div class="section-header" style="padding-left:0;padding-bottom:10px;">
+    ⚡ Chat with the Model
+  </div>
+  <div class="chat-box">
+    <div class="chat-messages" id="chat-messages">
+      <div class="msg assistant">
+        <div class="msg-label">FF5000</div>
+        Hello — I'm monitoring your watchlist live. Ask me about current signals, market conditions, strategy, or anything trading-related.
+      </div>
+    </div>
+    <div class="chat-input-row">
+      <textarea id="chat-input" rows="1" placeholder="Ask about signals, strategy, current positions…"
+        onkeydown="chatKeydown(event)" oninput="autoResize(this)"></textarea>
+      <button class="btn-send" id="chat-send" onclick="sendChat()">Send ↵</button>
+    </div>
+    <div class="chat-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</div>
+  </div>
+</div>
+
 <!-- Trades table -->
 <div class="section">
   <div class="section-header" style="padding-left:0;padding-bottom:10px;">Trades &amp; Suggestions</div>
@@ -382,27 +414,6 @@
       {% endif %}
     </tbody>
   </table>
-</div>
-
-<!-- Chat window -->
-<div class="chat-section">
-  <div class="section-header" style="padding-left:0;padding-bottom:10px;">
-    ⚡ Chat with the Model
-  </div>
-  <div class="chat-box">
-    <div class="chat-messages" id="chat-messages">
-      <div class="msg assistant">
-        <div class="msg-label">FF5000</div>
-        Hello — I'm monitoring your watchlist live. Ask me about current signals, market conditions, strategy, or anything trading-related.
-      </div>
-    </div>
-    <div class="chat-input-row">
-      <textarea id="chat-input" rows="1" placeholder="Ask about signals, strategy, current positions…"
-        onkeydown="chatKeydown(event)" oninput="autoResize(this)"></textarea>
-      <button class="btn-send" id="chat-send" onclick="sendChat()">Send ↵</button>
-    </div>
-    <div class="chat-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</div>
-  </div>
 </div>
 
 <div class="footer" id="footer-ts">Last updated: {{ now }} &nbsp;·&nbsp; Auto-refresh every 30s</div>
@@ -518,6 +529,22 @@ async function loadDbStats() {
   } catch(e) { console.warn('DB stats error', e); }
 }
 
+// ── Single-symbol backfill ────────────────────────────────────────────────────
+async function triggerBackfill() {
+  const sym = document.getElementById('backfill-sym').value.trim().toUpperCase();
+  if (!sym) { toast('Enter a symbol first', false); return; }
+  const res  = await fetch('/api/ingest/backfill', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({symbol: sym, days: 30})
+  });
+  const d = await res.json();
+  if (d.status === 'started') {
+    toast(`Backfill started for ${d.symbol} (${d.days}d)`, true);
+    document.getElementById('backfill-sym').value = '';
+  } else { toast('Backfill failed', false); }
+}
+
 // ── Resource Monitor ──────────────────────────────────────────────────────────
 async function loadResources() {
   try {
@@ -528,19 +555,17 @@ async function loadResources() {
     const grid    = document.getElementById('resource-grid');
     section.style.display = '';
     grid.innerHTML = items.map(r => {
-      const label = r.type === 'container'
-        ? (r.value >= 1 ? '● UP' : '✗ DOWN')
-        : `${r.value}%`;
-      const cls = r.type === 'container'
-        ? (r.value >= 1 ? 'up' : 'down')
-        : r.status;
-      const typeLabel = r.type === 'cpu' ? 'CPU' : r.type === 'mem' ? 'MEM' : r.type === 'disk' ? 'DISK' : 'SVC';
-      return `<div class="res-card ${r.status}">
-        <div>
-          <div class="res-name" title="${r.name}">${r.name}</div>
-          <div style="font-size:10px;color:var(--muted)">${typeLabel} · ${r.ts}</div>
+      const pct = r.value;
+      const cls = r.status === 'critical' ? 'critical' : r.status === 'warn' ? 'warn' : 'ok';
+      const barColor = cls === 'critical' ? 'var(--red)' : cls === 'warn' ? 'var(--yellow)' : 'var(--green)';
+      return `<div class="res-card ${cls}">
+        <div class="res-name">${r.name} <span style="font-size:10px;color:var(--muted)">as of ${r.ts}</span></div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+          <div style="flex:1;height:8px;border-radius:4px;background:var(--bg-card-2);overflow:hidden;">
+            <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.4s;"></div>
+          </div>
+          <div class="res-val ${cls}">${pct}%</div>
         </div>
-        <div class="res-val ${cls}">${label}</div>
       </div>`;
     }).join('');
   } catch(e) { console.warn('Resource stats error', e); }

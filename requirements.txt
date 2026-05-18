@@ -9,3 +9,4 @@ xgboost>=2.0
 scikit-learn>=1.4
 docker>=6.0
 yfinance>=0.2.50
+psutil>=5.9

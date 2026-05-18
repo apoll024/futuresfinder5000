@@ -197,13 +197,14 @@ def db_stats() -> dict:
 
 
 def resource_stats() -> list[dict]:
-    """Latest HealthMetric row per (metric_type, name) from watchdog."""
+    """Latest host-level CPU/mem/disk metrics from watchdog (3 cards only)."""
     session = Session()
     try:
         subq = (session.query(
                     HealthMetric.metric_type,
                     HealthMetric.name,
                     func.max(HealthMetric.ts).label("max_ts"))
+                .filter(HealthMetric.metric_type == "host")
                 .group_by(HealthMetric.metric_type, HealthMetric.name)
                 .subquery())
         rows = (session.query(HealthMetric)
@@ -211,12 +212,11 @@ def resource_stats() -> list[dict]:
                              (HealthMetric.name == subq.c.name) &
                              (HealthMetric.ts == subq.c.max_ts))
                 .all())
+        label_map = {"cpu": "CPU", "mem": "RAM", "disk": "Disk"}
         return [{
-            "type":   r.metric_type,
-            "name":   r.name,
+            "name":   label_map.get(r.name, r.name.upper()),
             "value":  round(r.value, 1),
             "status": r.status,
-            "note":   r.note,
             "ts":     r.ts.strftime("%H:%M"),
         } for r in rows]
     except Exception:
@@ -347,6 +347,31 @@ def api_stats():
                     "daily_loss_limit": get_daily_loss_limit(),
                     "ollama_ok":        ollama_healthy(),
                     "ingest_running":   ingest_st.get("running")})
+
+
+@app.route("/api/ingest/backfill", methods=["POST"])
+def api_backfill():
+    """Kick off a yfinance historical backfill for one or all symbols in a background thread."""
+    import threading
+    data   = request.json or {}
+    symbol = data.get("symbol", "").strip().upper()
+    days   = int(data.get("days", 30))
+
+    def _run(syms, d):
+        try:
+            from ingest.historical import ingest_historical
+            import os
+            os.environ["HISTORY_DAYS"] = str(d)
+            if syms:
+                os.environ["SYMBOLS"] = ",".join(syms)
+            ingest_historical()
+        except Exception as e:
+            print(f"[backfill] error: {e}")
+
+    syms = [symbol] if symbol else []
+    threading.Thread(target=_run, args=(syms, days), daemon=True).start()
+    label = symbol if symbol else "all symbols"
+    return jsonify({"status": "started", "symbol": label, "days": days})
 
 
 @app.route("/api/db/stats")

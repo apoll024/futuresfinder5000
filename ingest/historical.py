@@ -47,7 +47,7 @@ def _upsert_df(session, symbol: str, df) -> int:
     return result.rowcount or len(rows)
 
 
-def ingest_historical():
+def ingest_historical(symbols_override: list = None):
     try:
         import yfinance as yf
     except ImportError:
@@ -55,18 +55,19 @@ def ingest_historical():
         return
 
     init_db()
+    symbols  = symbols_override or SYMBOLS
     now      = datetime.now(timezone.utc)
     end      = now
     start_1m = end - timedelta(days=7)
     start_5m = end - timedelta(days=min(DAYS_BACK, 59))   # yfinance 5m limit: 60 days
 
-    print(f"[historical] Backfilling {DAYS_BACK}d history for {len(SYMBOLS)} symbols "
+    print(f"[historical] Backfilling {DAYS_BACK}d history for {len(symbols)} symbols "
           f"(1m: last 7d, 5m: 7–{DAYS_BACK}d)...")
 
     session = Session()
     total   = 0
 
-    for sym in SYMBOLS:
+    for sym in symbols:
         try:
             ticker = yf.Ticker(sym)
             c_1m = c_5m = 0

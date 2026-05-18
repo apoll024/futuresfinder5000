@@ -74,7 +74,32 @@ def restart_container(name):
         print(f"[watchdog] Failed to restart {name}: {e}")
 
 
-def write_metric(session, mtype, name, value, status, note=""):
+def host_metrics() -> dict:
+    """System-level CPU%, RAM%, and root disk% via psutil."""
+    try:
+        import psutil
+        cpu  = psutil.cpu_percent(interval=1)
+        mem  = psutil.virtual_memory().percent
+        disk = psutil.disk_usage("/").percent
+        return {"cpu": cpu, "mem": mem, "disk": disk}
+    except ImportError:
+        # Fallback: parse /proc
+        try:
+            with open("/proc/meminfo") as f:
+                mi = {k.strip(): int(v.split()[0]) for line in f
+                      for k, v in [line.split(":", 1)] if len(line.split(":", 1)) == 2}
+            mem = round(100.0 * (1 - mi.get("MemAvailable", 0) / mi.get("MemTotal", 1)), 1)
+        except Exception:
+            mem = 0.0
+        try:
+            r = subprocess.run(["df", "--output=pcent", "/"], capture_output=True, text=True, timeout=5)
+            disk = float(r.stdout.strip().splitlines()[-1].replace("%", ""))
+        except Exception:
+            disk = 0.0
+        return {"cpu": 0.0, "mem": mem, "disk": disk}
+
+
+
     session.add(HealthMetric(
         ts=datetime.utcnow(), metric_type=mtype,
         name=name, value=value, status=status, note=note
@@ -85,7 +110,13 @@ def run_checks():
     session = Session()
     alerts  = []
 
-    for stat in docker_stats():
+    # ── Host-level metrics (what actually matters) ────────────────────────────
+    hm = host_metrics()
+    for metric, val in hm.items():
+        status = "critical" if val >= CRITICAL_PCT else "warn" if val >= WARN_PCT else "ok"
+        write_metric(session, "host", metric, val, status)
+        if status != "ok":
+            alerts.append(f"{status.upper()}: host {metric} {val:.1f}%")
         name = stat["name"]
         cpu  = stat["cpu_pct"]
         mem  = stat["mem_pct"]
