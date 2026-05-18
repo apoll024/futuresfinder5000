@@ -302,22 +302,27 @@
   <div class="stat-card">
     <div class="label">Daily P&amp;L</div>
     <div class="value {{ stats.pnl_class }}" id="stat-pnl">${{ stats.pnl }}</div>
+    <button class="stat-reset" title="Clear today's trades" onclick="resetStat('trades_today')">⊘</button>
   </div>
   <div class="stat-card">
     <div class="label">Signals Today</div>
     <div class="value" id="stat-signals">{{ stats.signals_today }}</div>
+    <button class="stat-reset" title="Clear today's signals" onclick="resetStat('signals_today')">⊘</button>
   </div>
   <div class="stat-card">
     <div class="label">Trades Today</div>
     <div class="value" id="stat-trades">{{ stats.trades_today }}</div>
+    <button class="stat-reset" title="Clear today's trades" onclick="resetStat('trades_today')">⊘</button>
   </div>
   <div class="stat-card">
     <div class="label">Buy Signals</div>
     <div class="value positive" id="stat-buys">{{ stats.buys }}</div>
+    <button class="stat-reset" title="Clear today's buy trades" onclick="resetStat('buys_today')">⊘</button>
   </div>
   <div class="stat-card">
     <div class="label">Sell Signals</div>
     <div class="value negative" id="stat-sells">{{ stats.sells }}</div>
+    <button class="stat-reset" title="Clear today's sell trades" onclick="resetStat('sells_today')">⊘</button>
   </div>
   <div class="stat-card">
     <div class="label">Approved Capital</div>
@@ -342,10 +347,12 @@
   <div class="stat-card">
     <div class="label">All-Time Signals</div>
     <div class="value" id="stat-sig-count" style="color:var(--yellow)">…</div>
+    <button class="stat-reset" title="Delete ALL signals" onclick="resetStat('signals_all')">⊘</button>
   </div>
   <div class="stat-card">
     <div class="label">All-Time Trades</div>
     <div class="value" id="stat-trade-count">…</div>
+    <button class="stat-reset" title="Delete ALL trades" onclick="resetStat('trades_all')">⊘</button>
   </div>
 </div>
 
@@ -486,6 +493,27 @@ function toast(msg, ok=true) {
   t.textContent = msg;
   t.className = 'toast show ' + (ok ? 'ok' : 'err');
   setTimeout(() => t.className = 'toast', 2500);
+}
+
+// ── Stat reset ───────────────────────────────────────────────────────────────
+async function resetStat(scope) {
+  const labels = {
+    signals_today: "today's signals",
+    trades_today:  "today's trades & P&L",
+    buys_today:    "today's buy records",
+    sells_today:   "today's sell records",
+    signals_all:   "ALL signals (permanent)",
+    trades_all:    "ALL trades (permanent)"
+  };
+  if (!confirm('Clear ' + (labels[scope] || scope) + '? This cannot be undone.')) return;
+  const res  = await fetch('/api/stats/reset', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({scope})
+  });
+  const data = await res.json();
+  if (data.error) { toast(data.error, false); return; }
+  toast('Cleared — ' + (labels[scope] || scope));
+  loadStats();
 }
 
 // ── Trade toggle ─────────────────────────────────────────────────────────────
