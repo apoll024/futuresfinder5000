@@ -17,7 +17,7 @@ except ImportError:
 
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 from sqlalchemy import func, text
-from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, get_setting, set_setting
+from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, KnowledgeItem, get_setting, set_setting
 
 app      = Flask(__name__)
 ET       = ZoneInfo("America/New_York")
@@ -349,6 +349,63 @@ def api_stats():
                     "ingest_running":   ingest_st.get("running")})
 
 
+@app.route("/api/knowledge", methods=["GET"])
+def api_kb_list():
+    session = Session()
+    try:
+        items = session.query(KnowledgeItem).order_by(KnowledgeItem.ts.desc()).limit(100).all()
+        return jsonify([{
+            "id": i.id, "title": i.title, "source_url": i.source_url,
+            "tags": i.tags, "ts": str(i.ts)[:16],
+            "preview": (i.content[:200] + "…") if len(i.content) > 200 else i.content,
+        } for i in items])
+    finally:
+        session.close()
+
+
+@app.route("/api/knowledge", methods=["POST"])
+def api_kb_add():
+    data    = request.json or {}
+    mode    = data.get("mode", "text")   # "text" | "url"
+    title   = data.get("title", "").strip()
+    tags    = data.get("tags", "").strip().upper()
+    content = data.get("content", "").strip()
+    url     = data.get("url", "").strip()
+
+    if mode == "url" and url:
+        content = _fetch_url_text(url, max_chars=12000)
+        if not title:
+            title = url.split("/")[-1] or url
+    elif mode == "html" and content:
+        import re as _re
+        content = _re.sub(r'<(script|style)[^>]*>.*?</\1>', '', content, flags=_re.I | _re.S)
+        content = _re.sub(r'<[^>]+>', ' ', content)
+        content = _re.sub(r'[ \t]{2,}', ' ', content)
+        content = _re.sub(r'\n{3,}', '\n\n', content).strip()
+
+    if not content:
+        return jsonify({"error": "No content"}), 400
+    if not title:
+        title = content[:80]
+
+    new_id = kb_add(title, content, source_url=url, tags=tags)
+    return jsonify({"status": "saved", "id": new_id})
+
+
+@app.route("/api/knowledge/<int:item_id>", methods=["DELETE"])
+def api_kb_delete(item_id):
+    session = Session()
+    try:
+        item = session.query(KnowledgeItem).filter(KnowledgeItem.id == item_id).first()
+        if not item:
+            return jsonify({"error": "Not found"}), 404
+        session.delete(item)
+        session.commit()
+        return jsonify({"status": "deleted"})
+    finally:
+        session.close()
+
+
 @app.route("/api/ingest/backfill", methods=["POST"])
 def api_backfill():
     """Kick off a yfinance historical backfill for one or all symbols in a background thread."""
@@ -438,7 +495,44 @@ Key rules you always follow:
 At the start of each message you are given a live snapshot of current market state — use it to give specific, grounded answers. Be direct and concise. Cite actual values."""
 
 
-def _fetch_url_text(url: str, max_chars: int = 6000) -> str:
+def kb_search(query: str, limit: int = 4) -> list[dict]:
+    """Full-text search the knowledge base using Postgres tsvector. Returns top matches."""
+    session = Session()
+    try:
+        sql = text("""
+            SELECT id, title, source_url, tags, ts,
+                   LEFT(content, 1200) AS snippet
+            FROM knowledge
+            WHERE to_tsvector('english', content || ' ' || title)
+                  @@ plainto_tsquery('english', :q)
+            ORDER BY ts DESC
+            LIMIT :lim
+        """)
+        rows = session.execute(sql, {"q": query, "lim": limit}).fetchall()
+        return [{"id": r.id, "title": r.title, "source_url": r.source_url,
+                 "tags": r.tags, "ts": str(r.ts)[:16], "snippet": r.snippet}
+                for r in rows]
+    except Exception:
+        return []
+    finally:
+        session.close()
+
+
+def kb_add(title: str, content: str, source_url: str = "", tags: str = "") -> int:
+    """Save an item to the knowledge base. Returns the new row id."""
+    session = Session()
+    try:
+        item = KnowledgeItem(title=title[:300], content=content,
+                             source_url=source_url[:600] if source_url else "",
+                             tags=tags[:300] if tags else "")
+        session.add(item)
+        session.commit()
+        return item.id
+    finally:
+        session.close()
+
+
+
     """Fetch a URL and return plain text (strip HTML tags). Used to inject web content into chat."""
     import re as _re
     try:
@@ -477,6 +571,19 @@ def api_chat():
 
     ctx = build_chat_context()
     system_content = CHAT_SYSTEM_PROMPT + f"\n\n--- Live market snapshot ---\n{ctx}\n---"
+
+    # Inject relevant KB articles (FTS on user message)
+    kb_hits = kb_search(user_msg)
+    if kb_hits:
+        kb_block = "\n\n--- Relevant knowledge base articles ---\n"
+        for h in kb_hits:
+            kb_block += f"\n[{h['ts']}] {h['title']}"
+            if h.get("tags"):
+                kb_block += f" (tags: {h['tags']})"
+            kb_block += f"\n{h['snippet']}\n"
+        kb_block += "---"
+        system_content += kb_block
+
     if fetched_content:
         system_content += f"\n\n--- Web page content fetched from {fetched_url} ---\n{fetched_content}\n---"
 

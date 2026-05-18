@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from sqlalchemy import (
     create_engine, Column, String, Float, Integer,
-    DateTime, Boolean, Text, UniqueConstraint
+    DateTime, Boolean, Text, UniqueConstraint, Index
 )
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -84,6 +84,17 @@ class HealthMetric(Base):
     value       = Column(Float)        # percentage or 0/1 for container liveness
     status      = Column(String(10))   # ok | warn | critical
     note        = Column(Text)
+
+
+class KnowledgeItem(Base):
+    """Persistent knowledge base — articles, notes, EOD summaries injected into LLM context."""
+    __tablename__ = "knowledge"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    title      = Column(String(300), nullable=False)
+    source_url = Column(String(600))
+    content    = Column(Text, nullable=False)
+    tags       = Column(String(300))   # comma-separated symbols / topics
+    ts         = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 def get_setting(key: str, default: str = "") -> str:

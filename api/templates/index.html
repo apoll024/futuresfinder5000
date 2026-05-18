@@ -120,7 +120,18 @@
 
     /* ── DB / Resource monitor ── */
     .db-stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:4px 24px 16px;}
-    .resource-section{padding:0 24px 24px;}
+    .kb-section{padding:0 24px 24px;}
+    .kb-add-row{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:14px;}
+    .kb-tabs{display:flex;gap:6px;margin-bottom:12px;}
+    .kb-tab{background:var(--bg-card-2);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 14px;cursor:pointer;font-size:12px;}
+    .kb-tab.active{background:var(--blue);color:#fff;border-color:var(--blue);}
+    .kb-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+    .kb-item{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+    .kb-item-meta{font-size:11px;color:var(--muted);margin-top:3px;}
+    .kb-item-preview{font-size:12px;color:var(--fg-dim,#aaa);margin-top:4px;max-height:48px;overflow:hidden;}
+    .kb-del{background:transparent;border:1px solid var(--red,#e55);color:var(--red,#e55);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;white-space:nowrap;}
+    .kb-del:hover{background:var(--red,#e55);color:#fff;}
+    
     .resource-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
     .res-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;}
     .res-card.warn {border-left:3px solid var(--yellow);}
@@ -335,6 +346,48 @@
 <div class="resource-section" id="resource-section" style="display:none;">
   <div class="section-header" style="padding-left:0;padding-bottom:10px;">Resource Monitor</div>
   <div class="resource-grid" id="resource-grid"></div>
+</div>
+
+<!-- Knowledge Base -->
+<div class="section kb-section" id="kb-section">
+  <div class="section-header" style="padding-left:0;padding-bottom:10px;cursor:pointer;"
+       onclick="toggleKB()">
+    📚 Knowledge Base &nbsp;<span id="kb-toggle-icon">▼</span>
+    <span class="badge blue" id="kb-count-badge" style="margin-left:8px;">…</span>
+  </div>
+  <div id="kb-body">
+    <!-- Add form -->
+    <div class="kb-add-row">
+      <div class="kb-tabs">
+        <button class="kb-tab active" id="tab-url"  onclick="kbSetTab('url')">🔗 URL</button>
+        <button class="kb-tab"        id="tab-text" onclick="kbSetTab('text')">📝 Paste Text / HTML</button>
+      </div>
+
+      <div id="kb-form-url" class="kb-form">
+        <input type="text" id="kb-url-input" placeholder="https://…" style="flex:1;min-width:260px;">
+        <input type="text" id="kb-url-tags" placeholder="Tags: TQQQ,SQQQ" style="width:160px;">
+        <input type="text" id="kb-url-title" placeholder="Title (optional)" style="width:200px;">
+        <button class="btn btn-save" onclick="kbSave('url')">⬇ Fetch &amp; Save</button>
+      </div>
+
+      <div id="kb-form-text" class="kb-form" style="display:none;flex-direction:column;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input type="text" id="kb-text-title" placeholder="Title" style="flex:1;min-width:200px;">
+          <input type="text" id="kb-text-tags"  placeholder="Tags: TQQQ,SQQQ" style="width:160px;">
+        </div>
+        <textarea id="kb-text-content" rows="5"
+          placeholder="Paste article text, HTML, or any notes here…"
+          style="width:100%;font-size:12px;background:var(--bg-card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical;"></textarea>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-save" onclick="kbSave('text')">💾 Save as Text</button>
+          <button class="btn btn-save" onclick="kbSave('html')" style="background:var(--purple);">🧹 Strip HTML &amp; Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Item list -->
+    <div id="kb-list" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+  </div>
 </div>
 
 <!-- Signal cards -->
@@ -714,9 +767,102 @@ setInterval(refreshData, 30000);
 setInterval(loadDbStats, 120000);   // DB stats every 2 min (heavier query)
 setInterval(loadResources, 60000);  // Resource monitor every 1 min
 
+// ── Knowledge Base ─────────────────────────────────────────────────────────────
+let _kbOpen = true;
+
+function toggleKB() {
+  _kbOpen = !_kbOpen;
+  document.getElementById('kb-body').style.display = _kbOpen ? '' : 'none';
+  document.getElementById('kb-toggle-icon').textContent = _kbOpen ? '▼' : '▶';
+}
+
+function kbSetTab(tab) {
+  document.getElementById('kb-form-url').style.display  = tab === 'url'  ? 'flex' : 'none';
+  document.getElementById('kb-form-text').style.display = tab !== 'url'  ? 'flex' : 'none';
+  document.querySelectorAll('.kb-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + (tab === 'url' ? 'url' : 'text')).classList.add('active');
+}
+
+async function loadKB() {
+  try {
+    const res   = await fetch('/api/knowledge');
+    const items = await res.json();
+    document.getElementById('kb-count-badge').textContent = items.length + ' items';
+    const list = document.getElementById('kb-list');
+    if (!items.length) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:12px;">No items yet — add URLs or paste text above.</div>';
+      return;
+    }
+    list.innerHTML = items.map(i => `
+      <div class="kb-item" id="kb-item-${i.id}">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;font-size:13px;">${escHtml(i.title)}</div>
+          <div class="kb-item-meta">
+            ${i.ts}
+            ${i.tags ? ' &nbsp;·&nbsp; 🏷 ' + escHtml(i.tags) : ''}
+            ${i.source_url ? ' &nbsp;·&nbsp; <a href="' + escHtml(i.source_url) + '" target="_blank" style="color:var(--blue)">' + escHtml(i.source_url.slice(0,60)) + '…</a>' : ''}
+          </div>
+          <div class="kb-item-preview">${escHtml(i.preview)}</div>
+        </div>
+        <button class="kb-del" onclick="kbDelete(${i.id})">✕ Delete</button>
+      </div>`).join('');
+  } catch(e) { console.warn('KB load error', e); }
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function kbSave(mode) {
+  let body = {mode};
+  if (mode === 'url') {
+    body.url   = document.getElementById('kb-url-input').value.trim();
+    body.tags  = document.getElementById('kb-url-tags').value.trim();
+    body.title = document.getElementById('kb-url-title').value.trim();
+    if (!body.url) { toast('Enter a URL first', false); return; }
+  } else {
+    body.content = document.getElementById('kb-text-content').value.trim();
+    body.title   = document.getElementById('kb-text-title').value.trim();
+    body.tags    = document.getElementById('kb-text-tags').value.trim();
+    if (!body.content) { toast('Nothing to save', false); return; }
+  }
+
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '…saving';
+  try {
+    const res = await fetch('/api/knowledge', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const d = await res.json();
+    if (d.id) {
+      toast('Saved to knowledge base ✓', true);
+      // Clear inputs
+      ['kb-url-input','kb-url-tags','kb-url-title','kb-text-content','kb-text-title','kb-text-tags'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.value = '';
+      });
+      loadKB();
+    } else { toast(d.error || 'Save failed', false); }
+  } catch(e) { toast('Save error: ' + e, false); }
+  finally { btn.disabled = false; btn.textContent = mode === 'url' ? '⬇ Fetch & Save' : (mode === 'html' ? '🧹 Strip HTML & Save' : '💾 Save as Text'); }
+}
+
+async function kbDelete(id) {
+  if (!confirm('Delete this knowledge item?')) return;
+  const res = await fetch(`/api/knowledge/${id}`, {method:'DELETE'});
+  const d   = await res.json();
+  if (d.status === 'deleted') {
+    document.getElementById('kb-item-' + id)?.remove();
+    toast('Deleted', true);
+    loadKB();
+  }
+}
+
 // Load on page start
 loadDbStats();
 loadResources();
+loadKB();
+setInterval(loadKB, 120000);  // Refresh KB list every 2 min
 </script>
 </body>
 </html>

@@ -17,7 +17,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from db.models import Session, Signal, Bar, init_db
+from db.models import Session, Signal, Bar, KnowledgeItem, init_db
 
 ET          = ZoneInfo("America/New_York")
 SETTLE_TIME = dtime(16, 15)   # 15 min after market close — all final bars should be recorded
@@ -89,10 +89,42 @@ def settle_day(trade_date: date):
     session.close()
 
     total = len(signals)
-    win_rate = (settled_count and
-                sum(1 for s in signals if s.was_correct) / settled_count * 100)
+    correct = sum(1 for s in signals if s.was_correct)
+    win_rate = (correct / settled_count * 100) if settled_count else 0.0
     print(f"[settler] Done — {settled_count}/{total} settled | "
           f"day win rate: {win_rate:.1f}%")
+
+    # Write EOD knowledge base summary for LLM offline learning
+    _write_eod_summary(trade_date, signals, win_rate)
+
+
+def _write_eod_summary(trade_date: date, signals: list, win_rate: float):
+    """Persist an EOD recap to the knowledge base for LLM context on future sessions."""
+    if not signals:
+        return
+    lines = [f"EOD Summary for {trade_date} — Win rate: {win_rate:.1f}%\n"]
+    for s in signals:
+        outcome = f"{s.outcome_pct:+.2f}%" if s.outcome_pct is not None else "unsettled"
+        correct = "✓" if s.was_correct else "✗"
+        lines.append(f"  {s.symbol} {(s.action or '').upper()} | "
+                     f"entry={s.entry_price} exit={s.exit_price} "
+                     f"outcome={outcome} {correct} | conf={s.confidence}")
+    content = "\n".join(lines)
+    tags = ",".join(sorted({s.symbol for s in signals if s.symbol}))
+    session = Session()
+    try:
+        session.add(KnowledgeItem(
+            title=f"EOD Summary {trade_date}",
+            content=content,
+            source_url="",
+            tags=tags,
+        ))
+        session.commit()
+        print(f"[settler] EOD summary saved to knowledge base ({len(signals)} signals, tags: {tags})")
+    except Exception as e:
+        print(f"[settler] KB write failed: {e}")
+    finally:
+        session.close()
 
 
 def wait_until(target: dtime):
