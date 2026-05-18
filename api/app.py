@@ -3,7 +3,7 @@ FuturesFinder5000 — Interactive web dashboard
 Controls: trade on/off toggle, ingest on/off toggle, symbol management, capital allocation
 Data: live signals, projected/actual trades, daily P&L, pending signals
 """
-import os, sys, json, requests
+import os, sys, json, re, requests
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -438,6 +438,27 @@ Key rules you always follow:
 At the start of each message you are given a live snapshot of current market state — use it to give specific, grounded answers. Be direct and concise. Cite actual values."""
 
 
+def _fetch_url_text(url: str, max_chars: int = 6000) -> str:
+    """Fetch a URL and return plain text (strip HTML tags). Used to inject web content into chat."""
+    import re as _re
+    try:
+        resp = requests.get(url, timeout=15,
+                            headers={"User-Agent": "Mozilla/5.0 (compatible; FF5000/1.0)"})
+        resp.raise_for_status()
+        html = resp.text
+        # Strip scripts/styles then all tags
+        html = _re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html, flags=_re.I | _re.S)
+        text = _re.sub(r'<[^>]+>', ' ', html)
+        text = _re.sub(r'[ \t]{2,}', ' ', text)
+        text = _re.sub(r'\n{3,}', '\n\n', text).strip()
+        return text[:max_chars]
+    except Exception as e:
+        return f"[Could not fetch {url}: {e}]"
+
+
+_URL_RE = re.compile(r'https?://\S+')
+
+
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     data     = request.json or {}
@@ -447,8 +468,17 @@ def api_chat():
     if not user_msg:
         return jsonify({"error": "No message"}), 400
 
+    # If the user pasted a URL, fetch it server-side and inject the content
+    url_match = _URL_RE.search(user_msg)
+    fetched_content = ""
+    if url_match:
+        fetched_url = url_match.group(0)
+        fetched_content = _fetch_url_text(fetched_url)
+
     ctx = build_chat_context()
     system_content = CHAT_SYSTEM_PROMPT + f"\n\n--- Live market snapshot ---\n{ctx}\n---"
+    if fetched_content:
+        system_content += f"\n\n--- Web page content fetched from {fetched_url} ---\n{fetched_content}\n---"
 
     messages = (
         [{"role": "system", "content": system_content}]
@@ -463,7 +493,7 @@ def api_chat():
                 headers={"Content-Type": "application/json"},
                 json={"model": LLM_MODEL, "messages": messages,
                       "stream": True, "temperature": 0.25, "max_tokens": 1024},
-                stream=True, timeout=120,
+                stream=True, timeout=(15, 300),
             )
             r.raise_for_status()
             for line in r.iter_lines():
