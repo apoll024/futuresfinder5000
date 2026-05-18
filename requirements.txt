@@ -2,7 +2,7 @@ flask>=3.0
 alpaca-py>=0.20
 psycopg2-binary
 pandas>=2.2,<3.0
-pandas-ta>=0.3.14b0
+ta>=0.11.0
 requests
 python-dotenv
 sqlalchemy>=2.0
