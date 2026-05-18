@@ -4,7 +4,7 @@ Controls: trade on/off toggle, ingest on/off toggle, symbol management, capital 
 Data: live signals, projected/actual trades, daily P&L, pending signals
 """
 import os, sys, json, requests
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -145,9 +145,10 @@ def recent_trades(limit: int = 50) -> list[dict]:
 
 def daily_stats() -> dict:
     session = Session()
-    today  = date.today().isoformat()
-    trades = session.query(Trade).filter(Trade.ts.cast(str).startswith(today)).all()
-    sigs   = session.query(Signal).filter(Signal.ts.cast(str).startswith(today)).count()
+    start  = datetime.combine(date.today(), datetime.min.time())
+    end    = start + timedelta(days=1)
+    trades = session.query(Trade).filter(Trade.ts >= start, Trade.ts < end).all()
+    sigs   = session.query(Signal).filter(Signal.ts >= start, Signal.ts < end).count()
     session.close()
     bought = sum(t.price * t.qty for t in trades if t.side == "buy"  and t.status == "filled")
     sold   = sum(t.price * t.qty for t in trades if t.side == "sell" and t.status == "filled")
