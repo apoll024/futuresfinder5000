@@ -8,14 +8,26 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    mem_limit: 1g
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ff_user -d futuresfinder"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   ollama:
     image: ollama/ollama
     container_name: ff_ollama
     volumes:
       - ollama_data:/root/.ollama
+    mem_limit: 8g
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
 
   ingest:
     build: .
@@ -26,9 +38,13 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+      - LLM_API_URL=http://ollama:11434/v1/chat/completions
+      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b}
       - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
+    mem_limit: 768m
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   settler:
@@ -37,8 +53,24 @@ services:
     command: python ingest/settle.py
     environment:
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+    mem_limit: 384m
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  watchdog:
+    build: .
+    container_name: ff_watchdog
+    command: python ingest/watchdog.py
+    environment:
+      - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 256m
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   api:
@@ -59,10 +91,18 @@ services:
       - MAX_POSITION_USD=${MAX_POSITION_USD:-500}
       - MAX_DAILY_LOSS_USD=${MAX_DAILY_LOSS_USD:-200}
       - MAX_OPEN_POSITIONS=${MAX_OPEN_POSITIONS:-5}
+    mem_limit: 768m
     depends_on:
-      - db
-      - ollama
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5001/api/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   pgdata:
