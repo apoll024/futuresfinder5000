@@ -30,7 +30,7 @@ from zoneinfo import ZoneInfo
 from db.models import Session, Bar, Signal, init_db
 
 LLM_API_URL = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
-MODEL       = os.getenv("LLM_MODEL", "llama3.1:8b")
+MODEL       = os.getenv("LLM_MODEL", "llama3.2:3b")
 ET          = ZoneInfo("America/New_York")
 MARKET_OPEN = dtime(9, 30)
 ENTRY_START = dtime(9, 45)
@@ -89,7 +89,7 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     df["EMA_9"]          = ta_trend.ema_indicator(close, window=9)
     df["EMA_21"]         = ta_trend.ema_indicator(close, window=21)
     df["RSI_9"]          = ta_momentum.rsi(close, window=9)
-    df["MACD_12_26_9"]   = ta_trend.macd(close, window_slow=26, window_fast=12, window_sign=9)
+    df["MACD_12_26_9"]   = ta_trend.macd(close, window_slow=26, window_fast=12)
     df["MACDs_12_26_9"]  = ta_trend.macd_signal(close, window_slow=26, window_fast=12, window_sign=9)
     df["ATRr_14"]        = ta_vol.average_true_range(high, low, close, window=14)
 
