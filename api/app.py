@@ -373,7 +373,10 @@ def api_kb_add():
     url     = data.get("url", "").strip()
 
     if mode == "url" and url:
-        content = _fetch_url_text(url, max_chars=12000)
+        try:
+            content = _fetch_url_text(url, max_chars=12000)
+        except Exception as e:
+            return jsonify({"error": f"Failed to fetch URL: {e}"}), 502
         if not title:
             title = url.split("/")[-1] or url
     elif mode == "html" and content:
@@ -538,6 +541,7 @@ def kb_add(title: str, content: str, source_url: str = "", tags: str = "") -> in
 
 
 
+def _fetch_url_text(url, max_chars=6000):
     """Fetch a URL and return plain text (strip HTML tags). Used to inject web content into chat."""
     import re as _re
     try:
