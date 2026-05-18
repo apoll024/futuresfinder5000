@@ -16,7 +16,8 @@ except ImportError:
     _DOCKER_AVAILABLE = False
 
 from flask import Flask, render_template, jsonify, request
-from db.models import init_db, Session, Bar, Signal, Trade, get_setting, set_setting
+from sqlalchemy import func, text
+from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, get_setting, set_setting
 
 app  = Flask(__name__)
 ET   = ZoneInfo("America/New_York")
@@ -163,6 +164,66 @@ def daily_stats() -> dict:
     }
 
 
+def db_stats() -> dict:
+    """Bar/signal/trade counts, latest ingestion time, PostgreSQL DB size."""
+    session = Session()
+    try:
+        bar_count    = session.query(Bar).count()
+        signal_count = session.query(Signal).count()
+        trade_count  = session.query(Trade).count()
+        latest_bar   = session.query(Bar).order_by(Bar.ts.desc()).first()
+        oldest_bar   = session.query(Bar).order_by(Bar.ts.asc()).first()
+        sym_counts   = dict(session.query(Bar.symbol, func.count(Bar.id))
+                            .group_by(Bar.symbol).all())
+        try:
+            row = session.execute(
+                text("SELECT pg_size_pretty(pg_database_size(current_database()))")
+            ).fetchone()
+            db_size = row[0] if row else "N/A"
+        except Exception:
+            db_size = "N/A"
+        return {
+            "bar_count":    bar_count,
+            "signal_count": signal_count,
+            "trade_count":  trade_count,
+            "latest_bar":   latest_bar.ts.strftime("%Y-%m-%d %H:%M") if latest_bar else "—",
+            "oldest_bar":   oldest_bar.ts.strftime("%Y-%m-%d") if oldest_bar else "—",
+            "db_size":      db_size,
+            "sym_counts":   sym_counts,
+        }
+    finally:
+        session.close()
+
+
+def resource_stats() -> list[dict]:
+    """Latest HealthMetric row per (metric_type, name) from watchdog."""
+    session = Session()
+    try:
+        subq = (session.query(
+                    HealthMetric.metric_type,
+                    HealthMetric.name,
+                    func.max(HealthMetric.ts).label("max_ts"))
+                .group_by(HealthMetric.metric_type, HealthMetric.name)
+                .subquery())
+        rows = (session.query(HealthMetric)
+                .join(subq, (HealthMetric.metric_type == subq.c.metric_type) &
+                             (HealthMetric.name == subq.c.name) &
+                             (HealthMetric.ts == subq.c.max_ts))
+                .all())
+        return [{
+            "type":   r.metric_type,
+            "name":   r.name,
+            "value":  round(r.value, 1),
+            "status": r.status,
+            "note":   r.note,
+            "ts":     r.ts.strftime("%H:%M"),
+        } for r in rows]
+    except Exception:
+        return []
+    finally:
+        session.close()
+
+
 # ── page ─────────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -285,6 +346,16 @@ def api_stats():
                     "daily_loss_limit": get_daily_loss_limit(),
                     "ollama_ok":        ollama_healthy(),
                     "ingest_running":   ingest_st.get("running")})
+
+
+@app.route("/api/db/stats")
+def api_db_stats():
+    return jsonify(db_stats())
+
+
+@app.route("/api/health/latest")
+def api_health_latest():
+    return jsonify(resource_stats())
 
 
 if __name__ == "__main__":

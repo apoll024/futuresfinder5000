@@ -118,6 +118,22 @@
     .td-rejected{color:var(--red);}
     .no-data{color:var(--muted);font-style:italic;padding:16px;text-align:center;}
 
+    /* ── DB / Resource monitor ── */
+    .db-stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:4px 24px 16px;}
+    .resource-section{padding:0 24px 24px;}
+    .resource-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
+    .res-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;}
+    .res-card.warn {border-left:3px solid var(--yellow);}
+    .res-card.critical{border-left:3px solid var(--red);}
+    .res-card.ok   {border-left:3px solid var(--green);}
+    .res-name{font-size:12px;color:var(--muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .res-val {font-size:18px;font-weight:bold;}
+    .res-val.ok      {color:var(--green);}
+    .res-val.warn    {color:var(--yellow);}
+    .res-val.critical{color:var(--red);}
+    .res-val.up      {color:var(--green);}
+    .res-val.down    {color:var(--red);}
+
     .footer{color:var(--muted);font-size:11px;text-align:right;padding:8px 24px 16px;}
     .toast{
       position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:6px;
@@ -141,10 +157,18 @@
       Market {{ 'Open' if market_open else 'Closed' }}
     </span>
     <span class="badge blue" id="badge-mode">Mode: {{ trade_mode.upper() }}</span>
+    <span class="badge {{ 'green' if ingest_running == True else ('red' if ingest_running == False else 'yellow') }}" id="badge-ingest">
+      Ingest {{ '▶ Running' if ingest_running == True else ('■ Stopped' if ingest_running == False else '? Unknown') }}
+    </span>
   </div>
-  <button class="toggle-btn {{ 'on' if trading_on else 'off' }}" id="trade-toggle" onclick="toggleTrading()">
-    {{ '● TRADING ON (Paper)' if trading_on else '○ TRADING OFF' }}
-  </button>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <button class="toggle-btn {{ 'on' if trading_on else 'off' }}" id="trade-toggle" onclick="toggleTrading()">
+      {{ '● TRADING ON (Paper)' if trading_on else '○ TRADING OFF' }}
+    </button>
+    <button class="toggle-btn {{ 'on' if ingest_running == True else 'off' }}" id="ingest-toggle" onclick="toggleIngest()">
+      {{ '▶ INGEST ON' if ingest_running == True else '■ INGEST OFF' }}
+    </button>
+  </div>
 </header>
 
 <!-- Controls -->
@@ -228,6 +252,36 @@
     <div class="label">Approved Capital</div>
     <div class="value" id="stat-capital" style="color:var(--blue)">${{ approved_capital|int }}</div>
   </div>
+</div>
+
+<!-- DB / Ingestion Stats (loaded via JS) -->
+<div class="db-stats-row" id="db-stats-row">
+  <div class="stat-card">
+    <div class="label">Total Bars</div>
+    <div class="value" id="stat-bar-count" style="color:var(--blue)">…</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">DB Size</div>
+    <div class="value" id="stat-db-size" style="font-size:20px;color:var(--purple)">…</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Last Ingested</div>
+    <div class="value" id="stat-last-bar" style="font-size:16px">…</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">All-Time Signals</div>
+    <div class="value" id="stat-sig-count" style="color:var(--yellow)">…</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">All-Time Trades</div>
+    <div class="value" id="stat-trade-count">…</div>
+  </div>
+</div>
+
+<!-- Resource Monitor (loaded via JS) -->
+<div class="resource-section" id="resource-section" style="display:none;">
+  <div class="section-header" style="padding-left:0;padding-bottom:10px;">Resource Monitor</div>
+  <div class="resource-grid" id="resource-grid"></div>
 </div>
 
 <!-- Signal cards -->
@@ -369,6 +423,66 @@ async function saveSettings() {
   toast('Limits saved');
 }
 
+// ── Ingest toggle ─────────────────────────────────────────────────────────────
+async function toggleIngest() {
+  const btn = document.getElementById('ingest-toggle');
+  const badge = document.getElementById('badge-ingest');
+  btn.disabled = true;
+  try {
+    const res  = await fetch('/api/ingest/toggle', {method:'POST'});
+    const data = await res.json();
+    if (data.error) { toast(data.error, false); return; }
+    const on = data.running;
+    btn.className   = 'toggle-btn ' + (on ? 'on' : 'off');
+    btn.textContent = on ? '▶ INGEST ON' : '■ INGEST OFF';
+    badge.className = 'badge ' + (on ? 'green' : 'red');
+    badge.textContent = on ? 'Ingest ▶ Running' : 'Ingest ■ Stopped';
+    toast(on ? 'Ingestion STARTED' : 'Ingestion STOPPED', on);
+  } catch(e) { toast('Ingest toggle failed', false); }
+  finally { btn.disabled = false; }
+}
+
+// ── DB Stats ─────────────────────────────────────────────────────────────────
+async function loadDbStats() {
+  try {
+    const res  = await fetch('/api/db/stats');
+    const data = await res.json();
+    document.getElementById('stat-bar-count').textContent  = (data.bar_count  || 0).toLocaleString();
+    document.getElementById('stat-db-size').textContent    = data.db_size  || '—';
+    document.getElementById('stat-last-bar').textContent   = data.latest_bar || '—';
+    document.getElementById('stat-sig-count').textContent  = (data.signal_count || 0).toLocaleString();
+    document.getElementById('stat-trade-count').textContent= (data.trade_count  || 0).toLocaleString();
+  } catch(e) { console.warn('DB stats error', e); }
+}
+
+// ── Resource Monitor ──────────────────────────────────────────────────────────
+async function loadResources() {
+  try {
+    const res   = await fetch('/api/health/latest');
+    const items = await res.json();
+    if (!items.length) return;
+    const section = document.getElementById('resource-section');
+    const grid    = document.getElementById('resource-grid');
+    section.style.display = '';
+    grid.innerHTML = items.map(r => {
+      const label = r.type === 'container'
+        ? (r.value >= 1 ? '● UP' : '✗ DOWN')
+        : `${r.value}%`;
+      const cls = r.type === 'container'
+        ? (r.value >= 1 ? 'up' : 'down')
+        : r.status;
+      const typeLabel = r.type === 'cpu' ? 'CPU' : r.type === 'mem' ? 'MEM' : r.type === 'disk' ? 'DISK' : 'SVC';
+      return `<div class="res-card ${r.status}">
+        <div>
+          <div class="res-name" title="${r.name}">${r.name}</div>
+          <div style="font-size:10px;color:var(--muted)">${typeLabel} · ${r.ts}</div>
+        </div>
+        <div class="res-val ${cls}">${label}</div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.warn('Resource stats error', e); }
+}
+
 // ── Auto-refresh data ─────────────────────────────────────────────────────────
 async function refreshData() {
   try {
@@ -384,6 +498,15 @@ async function refreshData() {
     document.getElementById('stat-trades').textContent  = stats.trades_today;
     document.getElementById('stat-buys').textContent    = stats.buys;
     document.getElementById('stat-sells').textContent   = stats.sells;
+
+    // update ingest badge/button from stats
+    if (stats.ingest_running !== undefined && stats.ingest_running !== null) {
+      const on = stats.ingest_running;
+      document.getElementById('ingest-toggle').className   = 'toggle-btn ' + (on ? 'on' : 'off');
+      document.getElementById('ingest-toggle').textContent = on ? '▶ INGEST ON' : '■ INGEST OFF';
+      document.getElementById('badge-ingest').className    = 'badge ' + (on ? 'green' : 'red');
+      document.getElementById('badge-ingest').textContent  = on ? 'Ingest ▶ Running' : 'Ingest ■ Stopped';
+    }
 
     const tbody = document.getElementById('trades-body');
     if (trades.length) {
@@ -405,6 +528,12 @@ async function refreshData() {
 }
 
 setInterval(refreshData, 30000);
+setInterval(loadDbStats, 120000);   // DB stats every 2 min (heavier query)
+setInterval(loadResources, 60000);  // Resource monitor every 1 min
+
+// Load on page start
+loadDbStats();
+loadResources();
 </script>
 </body>
 </html>
