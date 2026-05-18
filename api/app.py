@@ -1,13 +1,19 @@
 """
 FuturesFinder5000 — Interactive web dashboard
-Controls: trade on/off toggle, symbol management, capital allocation
-Data: live signals, projected/actual trades, daily P&L
+Controls: trade on/off toggle, ingest on/off toggle, symbol management, capital allocation
+Data: live signals, projected/actual trades, daily P&L, pending signals
 """
 import os, sys, json, requests
 from datetime import datetime, date
 from pathlib import Path
 from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+try:
+    import docker as docker_sdk
+    _DOCKER_AVAILABLE = True
+except ImportError:
+    _DOCKER_AVAILABLE = False
 
 from flask import Flask, render_template, jsonify, request
 from db.models import init_db, Session, Bar, Signal, Trade, get_setting, set_setting
@@ -25,6 +31,29 @@ def ollama_healthy() -> bool:
         return r.ok
     except Exception:
         return False
+
+
+def get_docker_client():
+    if not _DOCKER_AVAILABLE:
+        return None
+    try:
+        return docker_sdk.from_env()
+    except Exception:
+        return None
+
+
+def get_ingest_status() -> dict:
+    client = get_docker_client()
+    if not client:
+        return {"running": None, "status": "docker unavailable"}
+    try:
+        c = client.containers.get("ff_ingest")
+        return {"running": c.status == "running", "status": c.status}
+    except Exception as e:
+        name = type(e).__name__
+        if "NotFound" in name:
+            return {"running": False, "status": "not found"}
+        return {"running": None, "status": str(e)}
 
 
 def get_symbols() -> list[str]:
@@ -75,6 +104,27 @@ def latest_signals(symbols: list[str]) -> list[dict]:
     return results
 
 
+def pending_signals(limit: int = 25) -> list[dict]:
+    """Signals model wants to act on but hasn't yet — the 'planned trades' queue."""
+    session = Session()
+    rows = (session.query(Signal)
+            .filter(Signal.acted_on == False, Signal.action.in_(["buy", "sell"]))
+            .order_by(Signal.ts.desc())
+            .limit(limit)
+            .all())
+    result = [{
+        "id":          s.id,
+        "symbol":      s.symbol,
+        "action":      s.action,
+        "confidence":  round(s.confidence * 100),
+        "reasoning":   (s.reasoning or "")[:200],
+        "ts":          s.ts.strftime("%Y-%m-%d %H:%M:%S"),
+        "entry_price": round(s.entry_price, 2) if s.entry_price else None,
+    } for s in rows]
+    session.close()
+    return result
+
+
 def recent_trades(limit: int = 50) -> list[dict]:
     session = Session()
     rows = (session.query(Trade).order_by(Trade.ts.desc()).limit(limit).all())
@@ -103,12 +153,12 @@ def daily_stats() -> dict:
     sold   = sum(t.price * t.qty for t in trades if t.side == "sell" and t.status == "filled")
     pnl    = round(sold - bought, 2)
     return {
-        "pnl":          pnl,
-        "pnl_class":    "positive" if pnl >= 0 else "negative",
-        "trades_today": len(trades),
-        "buys":         sum(1 for t in trades if t.side == "buy"),
-        "sells":        sum(1 for t in trades if t.side == "sell"),
-        "signals_today":sigs,
+        "pnl":           pnl,
+        "pnl_class":     "positive" if pnl >= 0 else "negative",
+        "trades_today":  len(trades),
+        "buys":          sum(1 for t in trades if t.side == "buy"),
+        "sells":         sum(1 for t in trades if t.side == "sell"),
+        "signals_today": sigs,
     }
 
 
@@ -118,13 +168,16 @@ def daily_stats() -> dict:
 def index():
     symbols    = get_symbols()
     trade_mode = get_trade_mode()
+    ingest_st  = get_ingest_status()
     now        = datetime.now(ET)
     return render_template("index.html",
         signals          = latest_signals(symbols),
         trades           = recent_trades(),
+        pending          = pending_signals(),
         stats            = daily_stats(),
         trade_mode       = trade_mode,
         trading_on       = trade_mode in ("paper", "live"),
+        ingest_running   = ingest_st.get("running"),
         approved_capital = get_approved_capital(),
         max_position     = get_max_position(),
         daily_loss_limit = get_daily_loss_limit(),
@@ -139,10 +192,34 @@ def index():
 @app.route("/api/trade/toggle", methods=["POST"])
 def toggle_trading():
     """Switch between suggest (off) and paper (on). Live requires manual env change."""
-    current = get_trade_mode()
+    current  = get_trade_mode()
     new_mode = "paper" if current == "suggest" else "suggest"
     set_setting("trade_mode", new_mode)
     return jsonify({"trade_mode": new_mode, "trading_on": new_mode == "paper"})
+
+
+@app.route("/api/ingest/status")
+def api_ingest_status():
+    return jsonify(get_ingest_status())
+
+
+@app.route("/api/ingest/toggle", methods=["POST"])
+def api_toggle_ingest():
+    client = get_docker_client()
+    if not client:
+        return jsonify({"error": "Docker socket unavailable — check volume mount"}), 503
+    try:
+        c = client.containers.get("ff_ingest")
+        if c.status == "running":
+            c.stop(timeout=15)
+            return jsonify({"running": False, "action": "stopped"})
+        else:
+            c.start()
+            return jsonify({"running": True, "action": "started"})
+    except Exception as e:
+        if "NotFound" in type(e).__name__:
+            return jsonify({"error": "ff_ingest container not found"}), 404
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/symbols/add", methods=["POST"])
@@ -187,6 +264,11 @@ def api_signals():
     return jsonify(latest_signals(get_symbols()))
 
 
+@app.route("/api/signals/pending")
+def api_pending_signals():
+    return jsonify(pending_signals())
+
+
 @app.route("/api/trades")
 def api_trades():
     return jsonify(recent_trades())
@@ -194,12 +276,14 @@ def api_trades():
 
 @app.route("/api/stats")
 def api_stats():
+    ingest_st = get_ingest_status()
     return jsonify({**daily_stats(),
                     "trade_mode":       get_trade_mode(),
                     "approved_capital": get_approved_capital(),
                     "max_position":     get_max_position(),
                     "daily_loss_limit": get_daily_loss_limit(),
-                    "ollama_ok":        ollama_healthy()})
+                    "ollama_ok":        ollama_healthy(),
+                    "ingest_running":   ingest_st.get("running")})
 
 
 if __name__ == "__main__":
