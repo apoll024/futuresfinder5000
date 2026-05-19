@@ -10,3 +10,4 @@ scikit-learn>=1.4
 docker>=6.0
 yfinance>=0.2.50
 psutil>=5.9
+feedparser>=6.0

@@ -193,6 +193,40 @@ If {und} is above VWAP and trending up -> favor TQQQ/UPRO/SOXL side.
 If {und} is below VWAP and trending down -> favor SQQQ/SPXU/SOXS side.
 """
 
+    # Options section — only included when options trading is enabled
+    options_enabled = get_setting("options_enabled", "false") == "true"
+    pair_info       = PAIRS.get(symbol, {})
+    underlying_sym  = pair_info.get("underlying", "")
+
+    if options_enabled and underlying_sym:
+        options_section = f"""
+OPTIONS TRADING (ENABLED — underlying: {underlying_sym}):
+You MAY recommend an options trade on {underlying_sym} (the underlying, NOT the leveraged ETF).
+Only recommend options when ALL are true:
+  1. Your ETF action is 'buy' or 'sell' (not 'hold')
+  2. Your confidence is >= 0.85
+  3. The directional move is expected to be meaningful (strong trend / breakout)
+Appropriate strategies:
+  - ATM call (moneyness: 'atm'): moderate conviction, expect moderate move
+  - Slight OTM call (moneyness: 'slight_otm'): high conviction, expect larger move
+  - Deep OTM call (moneyness: 'deep_otm'): very high conviction, expect big move
+  - ITM call (moneyness: 'itm'): more expensive but moves with delta ≈ 0.7+
+  (Use 'put' equivalents for bearish signals)
+DTE preference: 5 = 0DTE+ aggressive, 7 = standard weekly, 14 = next weekly
+If NOT recommending options, set option_rec to null.
+"""
+        option_rec_schema = (
+            '  "option_rec": null | {\n'
+            '    "direction": "call" | "put",\n'
+            '    "moneyness": "atm" | "slight_otm" | "deep_otm" | "itm",\n'
+            '    "dte_preference": 5 | 7 | 14,\n'
+            '    "reasoning": "why options + which moneyness"\n'
+            '  }\n'
+        )
+    else:
+        options_section    = ""
+        option_rec_schema  = '  "option_rec": null\n'
+
     prompt = f"""You are FuturesFinder5000, an autonomous day-trading agent. Your sole mission is to grow the capital allocated to you through disciplined, rules-based leveraged ETF trading.
 
 IDENTITY & PURPOSE:
@@ -230,7 +264,7 @@ CAPITAL PRESERVATION:
 - When uncertain, the correct answer is always "hold"
 - One losing trade undoes multiple winning ones — be selective
 - Do NOT chase moves already underway; wait for the next setup
-{underlying_section}
+{options_section}{underlying_section}
 {symbol} technical indicators (1-min bars):
 {json.dumps(indicators, indent=2)}
 
@@ -242,15 +276,15 @@ Respond ONLY with valid JSON — no prose, no explanation outside the JSON:
   "action": "buy" | "sell" | "hold",
   "confidence": 0.0-1.0,
   "reasoning": "cite specific values: VWAP delta, volume ratio, RSI, MACD crossover, minutes left",
-  "add_symbol": null
-}}
+  "add_symbol": null,
+{option_rec_schema}}}
 add_symbol: set to a ticker string ONLY if you identify a high-conviction opportunity in a liquid US equity or leveraged ETF not currently tracked. Must be alphanumeric, ≤ 5 chars. Otherwise null."""
 
     r = requests.post(LLM_API_URL,
                       headers={"Content-Type": "application/json"},
                       json={"model": MODEL,
                             "messages": [{"role": "user", "content": prompt}],
-                            "max_tokens": 350, "temperature": 0.1},
+                            "max_tokens": 450, "temperature": 0.1},
                       timeout=120)
     r.raise_for_status()
     content = r.json()["choices"][0]["message"]["content"].strip()
@@ -315,6 +349,18 @@ def run_analysis(symbol: str):
 
     from trade.executor import execute_signal
     execute_signal(sig_id)
+
+    # Execute option recommendation if present and options are enabled
+    option_rec = result.get("option_rec")
+    if (option_rec and isinstance(option_rec, dict)
+            and get_setting("options_enabled", "false") == "true"):
+        und_symbol = PAIRS.get(symbol, {}).get("underlying")
+        if und_symbol:
+            try:
+                from trade.executor import execute_option_order
+                execute_option_order(und_symbol, option_rec, sig_id, TRADE_MODE)
+            except Exception as e:
+                print(f"  [{symbol}] Option order error: {e}")
 
 
 if __name__ == "__main__":

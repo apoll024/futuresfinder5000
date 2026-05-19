@@ -3,7 +3,7 @@ FuturesFinder5000 — Interactive web dashboard
 Controls: trade on/off toggle, ingest on/off toggle, symbol management, capital allocation
 Data: live signals, projected/actual trades, daily P&L, pending signals
 """
-import os, sys, json, re, requests, hashlib, functools
+import os, sys, json, re, requests, hashlib, functools, threading
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -121,6 +121,95 @@ def get_max_position() -> float:
 
 def get_daily_loss_limit() -> float:
     return float(get_setting("max_daily_loss_usd", "200"))
+
+
+def get_options_enabled() -> bool:
+    return get_setting("options_enabled", "false") == "true"
+
+
+def get_max_option_premium() -> float:
+    return float(get_setting("max_option_premium_usd", "200"))
+
+
+def get_all_positions() -> list[dict]:
+    """Open positions: Alpaca in paper/live mode; derived from today's trade log in suggest mode."""
+    mode = get_trade_mode()
+    if mode != "suggest":
+        try:
+            from trade.executor import get_client
+            client = get_client()
+            raw    = client.get_all_positions()
+            db     = Session()
+            result = []
+            for pos in raw:
+                sym       = pos.symbol
+                bar       = db.query(Bar).filter(Bar.symbol == sym).order_by(Bar.ts.desc()).first()
+                cur_price = float(bar.close) if bar else float(pos.current_price or 0)
+                avg_entry = float(pos.avg_entry_price or 0)
+                qty       = float(pos.qty or 0)
+                unreal    = round((cur_price - avg_entry) * qty, 2)
+                pct       = round((cur_price - avg_entry) / avg_entry * 100, 2) if avg_entry else 0.0
+                result.append({
+                    "symbol":         sym,
+                    "qty":            round(qty, 4),
+                    "avg_entry":      round(avg_entry, 4),
+                    "current_price":  round(cur_price, 4),
+                    "unrealized_pnl": unreal,
+                    "pct_change":     pct,
+                    "market_value":   round(qty * cur_price, 2),
+                })
+            db.close()
+            return result
+        except Exception as e:
+            print(f"[positions] Alpaca error: {e}")
+            return []
+
+    # Suggest mode — derive net positions from today's trade log
+    db = Session()
+    try:
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        trades      = db.query(Trade).filter(Trade.ts >= today_start).order_by(Trade.ts.asc()).all()
+    finally:
+        db.close()
+
+    net_qty:    dict[str, float] = {}
+    total_cost: dict[str, float] = {}
+    for t in trades:
+        sym   = t.symbol
+        qty   = float(t.qty   or 0)
+        price = float(t.price or 0)
+        net_qty.setdefault(sym, 0.0)
+        total_cost.setdefault(sym, 0.0)
+        if t.side == "buy":
+            total_cost[sym] += price * qty
+            net_qty[sym]    += qty
+        elif t.side == "sell" and net_qty[sym] > 0:
+            avg             = total_cost[sym] / net_qty[sym]
+            removed         = min(qty, net_qty[sym])
+            total_cost[sym] -= avg * removed
+            net_qty[sym]    = max(0.0, net_qty[sym] - qty)
+
+    result = []
+    db2    = Session()
+    for sym, qty in net_qty.items():
+        if qty <= 0:
+            continue
+        avg_entry = total_cost[sym] / qty if qty > 0 else 0.0
+        bar       = db2.query(Bar).filter(Bar.symbol == sym).order_by(Bar.ts.desc()).first()
+        cur_price = float(bar.close) if bar else avg_entry
+        unreal    = round((cur_price - avg_entry) * qty, 2)
+        pct       = round((cur_price - avg_entry) / avg_entry * 100, 2) if avg_entry else 0.0
+        result.append({
+            "symbol":         sym,
+            "qty":            round(qty, 4),
+            "avg_entry":      round(avg_entry, 4),
+            "current_price":  round(cur_price, 4),
+            "unrealized_pnl": unreal,
+            "pct_change":     pct,
+            "market_value":   round(qty * cur_price, 2),
+        })
+    db2.close()
+    return result
 
 
 def latest_signals(symbols: list[str]) -> list[dict]:
@@ -279,19 +368,21 @@ def index():
     ingest_st  = get_ingest_status()
     now        = datetime.now(ET)
     return render_template("index.html",
-        signals          = latest_signals(symbols),
-        trades           = recent_trades(),
-        pending          = pending_signals(),
-        stats            = daily_stats(),
-        trade_mode       = trade_mode,
-        trading_on       = trade_mode in ("paper", "live"),
-        ingest_running   = ingest_st.get("running"),
-        approved_capital = get_approved_capital(),
-        max_position     = get_max_position(),
-        daily_loss_limit = get_daily_loss_limit(),
-        ollama_ok        = ollama_healthy(),
-        now              = now.strftime("%Y-%m-%d %H:%M:%S ET"),
-        market_open      = "09:45" <= now.strftime("%H:%M") <= "15:45",
+        signals             = latest_signals(symbols),
+        trades              = recent_trades(),
+        pending             = pending_signals(),
+        stats               = daily_stats(),
+        trade_mode          = trade_mode,
+        trading_on          = trade_mode in ("paper", "live"),
+        ingest_running      = ingest_st.get("running"),
+        approved_capital    = get_approved_capital(),
+        max_position        = get_max_position(),
+        daily_loss_limit    = get_daily_loss_limit(),
+        options_enabled     = get_options_enabled(),
+        max_option_premium  = get_max_option_premium(),
+        ollama_ok           = ollama_healthy(),
+        now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
+        market_open         = "09:45" <= now.strftime("%H:%M") <= "15:45",
     )
 
 
@@ -360,7 +451,9 @@ def remove_symbol():
 def update_settings():
     data = request.json or {}
     updated = {}
-    for key in ("approved_capital_usd", "max_position_usd", "max_daily_loss_usd"):
+    # Numeric limits
+    for key in ("approved_capital_usd", "max_position_usd", "max_daily_loss_usd",
+                "max_option_premium_usd"):
         if key in data:
             try:
                 val = float(data[key])
@@ -368,6 +461,11 @@ def update_settings():
                 updated[key] = val
             except ValueError:
                 return jsonify({"error": f"Invalid value for {key}"}), 400
+    # Boolean settings
+    if "options_enabled" in data:
+        val = "true" if str(data["options_enabled"]).lower() in ("true", "1", "yes") else "false"
+        set_setting("options_enabled", val)
+        updated["options_enabled"] = val
     return jsonify({"updated": updated})
 
 
@@ -437,6 +535,221 @@ def api_stats_reset():
         db.close()
 
 
+# ── API: holdings / liquidation ───────────────────────────────────────────────
+
+@app.route("/api/positions")
+@login_required
+def api_positions():
+    return jsonify(get_all_positions())
+
+
+@app.route("/api/positions/liquidate", methods=["POST"])
+@login_required
+def api_liquidate_position():
+    symbol = (request.json or {}).get("symbol", "").strip().upper()
+    if not symbol:
+        return jsonify({"error": "No symbol provided"}), 400
+
+    mode = get_trade_mode()
+    if mode == "suggest":
+        positions = get_all_positions()
+        pos = next((p for p in positions if p["symbol"] == symbol), None)
+        if not pos:
+            return jsonify({"error": f"No open position in {symbol}"}), 400
+        db = Session()
+        try:
+            bar   = db.query(Bar).filter(Bar.symbol == symbol).order_by(Bar.ts.desc()).first()
+            price = float(bar.close) if bar else pos["avg_entry"]
+            db.add(Trade(symbol=symbol, side="sell", qty=pos["qty"],
+                         price=price, mode=mode, status="suggested"))
+            db.commit()
+        finally:
+            db.close()
+        return jsonify({"status": "suggested", "symbol": symbol, "qty": pos["qty"]})
+
+    try:
+        from trade.executor import get_client
+        get_client().close_position(symbol)
+        return jsonify({"status": "closed", "symbol": symbol})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/positions/liquidate-all", methods=["POST"])
+@login_required
+def api_liquidate_all():
+    mode      = get_trade_mode()
+    positions = get_all_positions()
+    if not positions:
+        return jsonify({"status": "ok", "closed": 0})
+
+    if mode == "suggest":
+        db = Session()
+        try:
+            for pos in positions:
+                bar   = db.query(Bar).filter(Bar.symbol == pos["symbol"]).order_by(Bar.ts.desc()).first()
+                price = float(bar.close) if bar else pos["avg_entry"]
+                db.add(Trade(symbol=pos["symbol"], side="sell", qty=pos["qty"],
+                             price=price, mode=mode, status="suggested"))
+            db.commit()
+        finally:
+            db.close()
+        return jsonify({"status": "suggested", "closed": len(positions)})
+
+    try:
+        from trade.executor import close_all_positions
+        close_all_positions("MANUAL")
+        return jsonify({"status": "closed", "closed": len(positions)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/positions/ai-review", methods=["POST"])
+@login_required
+def api_positions_ai_review():
+    positions = get_all_positions()
+    if not positions:
+        return jsonify({"error": "No open positions to review"}), 400
+
+    sigs           = latest_signals([p["symbol"] for p in positions])
+    indicators_map = {s["symbol"]: s.get("indicators", {}) for s in sigs}
+    now            = datetime.now(ET)
+    cutoff_dt      = now.replace(hour=15, minute=45, second=0, microsecond=0)
+    minutes_left   = max(0, int((cutoff_dt - now).total_seconds() / 60))
+    mkt_open       = "09:45" <= now.strftime("%H:%M") <= "15:45"
+
+    prompt = (
+        "You are FuturesFinder5000 reviewing open positions for potential liquidation.\n\n"
+        f"SESSION: {now.strftime('%H:%M ET')} | Market: {'OPEN' if mkt_open else 'CLOSED'} | "
+        f"{minutes_left} min to session close | Mode: {get_trade_mode()}\n\n"
+        "OPEN POSITIONS:\n"
+        + json.dumps(positions, indent=2)
+        + "\n\nCURRENT INDICATORS PER SYMBOL:\n"
+        + json.dumps(indicators_map, indent=2)
+        + "\n\nEXIT RULES — recommend 'liquidate' when ANY apply:\n"
+        "1. < 30 minutes left in session — mandatory EOD exit (leveraged ETF decay)\n"
+        "2. RSI > 75 while long — overbought, take profit\n"
+        "3. Price below VWAP on underlying — trend reversed\n"
+        "4. Volume ratio < 0.7 after entry — conviction gone\n"
+        "5. Unrealized loss > 2% of position value — stop loss triggered\n"
+        "6. Position open > 2 hours with no meaningful gain\n\n"
+        "Analyze each position against current indicators. Be specific — cite actual values "
+        "(RSI, VWAP delta, volume ratio, P&L %, minutes remaining).\n\n"
+        "Respond ONLY with valid JSON — no prose outside it:\n"
+        "{\n"
+        '  "summary": "1-2 sentence overall assessment",\n'
+        '  "positions": [\n'
+        '    {"symbol": "TICKER", "action": "hold|liquidate", "urgency": "low|medium|high",\n'
+        '     "reasoning": "cite actual indicator values"}\n'
+        "  ]\n"
+        "}"
+    )
+
+    messages = [
+        {"role": "system", "content": (
+            "You are FuturesFinder5000 — a disciplined leveraged ETF day-trading agent. "
+            "Review positions strictly and conservatively. Always cite actual numbers. "
+            "When uncertain, recommend hold rather than guessing."
+        )},
+        {"role": "user", "content": prompt},
+    ]
+
+    def generate():
+        try:
+            r = requests.post(
+                LLM_API_URL,
+                headers={"Content-Type": "application/json"},
+                json={"model": LLM_MODEL, "messages": messages,
+                      "stream": True, "temperature": 0.1, "max_tokens": 1024},
+                stream=True, timeout=(15, 120),
+            )
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                decoded = line.decode("utf-8")
+                if not decoded.startswith("data: "):
+                    continue
+                chunk = decoded[6:]
+                if chunk.strip() == "[DONE]":
+                    yield "data: [DONE]\n\n"
+                    return
+                try:
+                    obj   = json.loads(chunk)
+                    delta = obj["choices"][0]["delta"].get("content", "")
+                    if delta:
+                        yield f"data: {json.dumps({'content': delta})}\n\n"
+                except Exception:
+                    pass
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return Response(stream_with_context(generate()),
+                    content_type="text/event-stream",
+                    headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
+
+
+# ── API: news digest ──────────────────────────────────────────────────────────
+
+_digest_running = False
+
+
+@app.route("/api/news/digest/status")
+@login_required
+def api_news_digest_status():
+    return jsonify({
+        "last_run":   get_setting("news_digest_last_run", "Never"),
+        "last_count": int(get_setting("news_digest_last_count", "0") or 0),
+        "running":    _digest_running,
+    })
+
+
+@app.route("/api/news/digest/run", methods=["POST"])
+@login_required
+def api_news_digest_run():
+    global _digest_running
+    if _digest_running:
+        return jsonify({"error": "Digest already running"}), 409
+
+    def _run():
+        global _digest_running
+        _digest_running = True
+        try:
+            from ingest.news_digest import run_digest
+            run_digest()
+        except Exception as e:
+            print(f"[digest] manual run error: {e}")
+        finally:
+            _digest_running = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"status": "started"})
+
+
+# ── API: options chain ─────────────────────────────────────────────────────────
+
+@app.route("/api/options/chain/<symbol>")
+@login_required
+def api_options_chain(symbol: str):
+    """Return available weekly option contracts for a given underlying symbol."""
+    try:
+        from trade.executor import get_option_chain
+        direction = request.args.get("direction", "call")
+        dte_max   = int(request.args.get("dte_max", "14"))
+        contracts = get_option_chain(symbol.upper(), direction, dte_max=dte_max)
+        return jsonify([{
+            "symbol":      str(c.symbol),
+            "type":        str(c.contract_type),
+            "strike":      float(c.strike_price or 0),
+            "expiry":      str(c.expiration_date),
+            "close_price": float(c.close_price or 0),
+            "open_interest": int(c.open_interest or 0),
+        } for c in contracts])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/knowledge", methods=["GET"])
 @login_required
 def api_kb_list():
@@ -504,7 +817,6 @@ def api_kb_delete(item_id):
 @login_required
 def api_backfill():
     """Kick off a yfinance historical backfill for one or all symbols in a background thread."""
-    import threading
     data   = request.json or {}
     symbol = data.get("symbol", "").strip().upper()
     days   = int(data.get("days", 30))
@@ -554,6 +866,15 @@ def build_chat_context() -> str:
         for s in sigs
     )
 
+    positions = get_all_positions()
+    pos_lines = "\n".join(
+        f"  {p['symbol']}: {p['qty']}sh @ ${p['avg_entry']}"
+        f" | now ${p['current_price']}"
+        f" | P&L ${p['unrealized_pnl']:+.2f} ({p['pct_change']:+.1f}%)"
+        f" | value ${p['market_value']:,.0f}"
+        for p in positions
+    )
+
     return (
         f"Time: {now.strftime('%Y-%m-%d %H:%M ET')} | "
         f"Market: {'OPEN' if mkt_open else 'CLOSED'}\n"
@@ -561,11 +882,14 @@ def build_chat_context() -> str:
         f"Approved capital: ${get_approved_capital():,.0f} | "
         f"Max position: ${get_max_position():,.0f} | "
         f"Daily loss limit: ${get_daily_loss_limit():,.0f}\n"
+        f"Options trading: {'ENABLED (max premium ${:.0f})'.format(get_max_option_premium()) if get_options_enabled() else 'DISABLED'} | "
+        f"News digest last run: {get_setting('news_digest_last_run', 'Never')}\n"
         f"Ingest: {'running' if ingest_st.get('running') else 'stopped'} | "
         f"Ollama: {'ok' if ollama_healthy() else 'OFFLINE'}\n"
         f"Today — P&L: ${stats['pnl']} | "
         f"Trades: {stats['trades_today']} (B={stats['buys']} S={stats['sells']}) | "
         f"Signals: {stats['signals_today']}\n"
+        f"Open positions ({len(positions)}):\n{pos_lines if pos_lines else '  No open positions'}\n"
         f"Watchlist signals:\n{sig_lines if sig_lines else '  No signals yet'}"
     )
 

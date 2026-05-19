@@ -193,6 +193,38 @@
     .btn-send:disabled{opacity:0.45;cursor:default;}
     .chat-hint{font-size:11px;color:var(--muted);padding:0 16px 10px;text-align:right;}
 
+    /* ── Holdings section ── */
+    .holdings-section{padding:0 24px 20px;}
+    .holdings-hdr{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;}
+    .btn-danger{background:#2e1a1a;color:var(--red);border:1px solid var(--red);}
+    .btn-ai    {background:#1e1a2e;color:var(--purple);border:1px solid var(--purple);}
+    .ai-review-panel{
+      margin-top:12px;background:var(--surface2);border:1px solid var(--border);
+      border-radius:8px;padding:14px;display:none;
+    }
+    .ai-review-panel.visible{display:block;}
+    .ai-rec{
+      display:flex;align-items:flex-start;gap:10px;padding:8px 0;
+      border-bottom:1px solid var(--border);flex-wrap:wrap;
+    }
+    .ai-rec:last-child{border-bottom:none;}
+    .ai-rec-sym   {font-weight:bold;min-width:56px;font-size:13px;}
+    .ai-rec-action{min-width:90px;font-weight:bold;font-size:12px;text-transform:uppercase;}
+    .ai-rec-action.liquidate{color:var(--red);}
+    .ai-rec-action.hold     {color:var(--green);}
+    .ai-rec-urgency        {min-width:60px;font-size:11px;}
+    .ai-rec-urgency.high   {color:var(--red);}
+    .ai-rec-urgency.medium {color:var(--yellow);}
+    .ai-rec-urgency.low    {color:var(--muted);}
+    .ai-rec-reason{flex:1;font-size:12px;color:var(--muted);min-width:120px;}
+    .btn-accept{
+      padding:3px 10px;border-radius:4px;background:#2e1a1a;color:var(--red);
+      border:1px solid var(--red);cursor:pointer;font-size:11px;white-space:nowrap;
+    }
+    .btn-accept:hover{background:var(--red);color:#fff;}
+    .holding-pnl-pos{color:var(--green);font-weight:bold;}
+    .holding-pnl-neg{color:var(--red);font-weight:bold;}
+
     .footer{color:var(--muted);font-size:11px;text-align:right;padding:8px 24px 16px;}
     .toast{
       position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:6px;
@@ -283,6 +315,24 @@
       <button class="btn btn-save" onclick="saveSettings()">Save Limits</button>
     </div>
 
+    <!-- Options trading toggle -->
+    <div class="control-group">
+      <label>Options Trading</label>
+      <button id="options-toggle" class="btn {% if options_enabled %}btn-danger{% else %}btn-save{% endif %}"
+              onclick="toggleOptions()">
+        {% if options_enabled %}⚡ Enabled{% else %}○ Disabled{% endif %}
+      </button>
+    </div>
+
+    <div class="control-group" id="option-premium-group" {% if not options_enabled %}style="display:none;"{% endif %}>
+      <label>Max Premium/Contract</label>
+      <div class="input-row">
+        <span style="color:var(--muted)">$</span>
+        <input type="number" id="max-option-premium" value="{{ max_option_premium|int }}" min="10" step="10">
+        <button class="btn btn-save" onclick="saveOptionSettings()">Save</button>
+      </div>
+    </div>
+
     <!-- Single-symbol backfill -->
     <div class="control-group">
       <label>Backfill History</label>
@@ -354,6 +404,14 @@
     <div class="value" id="stat-trade-count">…</div>
     <button class="stat-reset" title="Delete ALL trades" onclick="resetStat('trades_all')">⊘</button>
   </div>
+  <!-- News Digest card -->
+  <div class="stat-card">
+    <div class="label">News Digest</div>
+    <div class="value" id="stat-digest-count" style="color:var(--blue)">…</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:2px;" id="stat-digest-time">…</div>
+    <button class="stat-reset" title="Run news digest now" id="btn-digest-run"
+            onclick="runDigestNow()">▶</button>
+  </div>
 </div>
 
 <!-- Resource Monitor (loaded via JS) -->
@@ -401,6 +459,41 @@
 
     <!-- Item list -->
     <div id="kb-list" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+  </div>
+</div>
+
+<!-- Current Holdings -->
+<div class="holdings-section" id="holdings-section">
+  <div class="holdings-hdr">
+    <span class="section-header" style="padding:0;margin:0;">💼 Current Holdings</span>
+    <span class="badge blue" id="holdings-count-badge">0 positions</span>
+    <div style="margin-left:auto;display:flex;gap:8px;">
+      <button class="btn btn-ai"    id="btn-ai-review" onclick="aiReviewPositions()">🤖 AI Review</button>
+      <button class="btn btn-danger" onclick="liquidateAll()">⚡ Liquidate All</button>
+    </div>
+  </div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+    <table id="holdings-table">
+      <thead>
+        <tr>
+          <th>Symbol</th><th>Qty</th><th>Avg Entry</th><th>Current</th>
+          <th>Unrealized P&amp;L</th><th>Change %</th><th>Mkt Value</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="holdings-body">
+        <tr><td colspan="8" class="no-data">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- AI Review panel — shown after AI analysis -->
+  <div class="ai-review-panel" id="ai-review-panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <span style="font-size:12px;font-weight:bold;color:var(--purple);">🤖 AI Position Review</span>
+      <button class="btn-remove" onclick="closeAiPanel()">✕ Close</button>
+    </div>
+    <div id="ai-review-summary" style="font-size:13px;color:var(--text);margin-bottom:10px;line-height:1.5;"></div>
+    <div id="ai-review-recs"></div>
   </div>
 </div>
 
@@ -583,6 +676,70 @@ async function saveSettings() {
   document.getElementById('stat-capital').textContent =
     '$' + parseInt(body.approved_capital_usd).toLocaleString();
   toast('Limits saved');
+}
+
+// ── Options controls ──────────────────────────────────────────────────────────
+async function toggleOptions() {
+  const btn     = document.getElementById('options-toggle');
+  const group   = document.getElementById('option-premium-group');
+  const enabled = btn.textContent.trim().startsWith('⚡');
+  const newVal  = !enabled;
+  const res = await fetch('/api/settings', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({options_enabled: newVal})
+  });
+  const data = await res.json();
+  if (data.error) { toast(data.error, false); return; }
+  btn.textContent = newVal ? '⚡ Enabled' : '○ Disabled';
+  btn.className   = newVal ? 'btn btn-danger' : 'btn btn-save';
+  group.style.display = newVal ? '' : 'none';
+  toast('Options trading ' + (newVal ? 'enabled' : 'disabled'));
+}
+
+async function saveOptionSettings() {
+  const premium = document.getElementById('max-option-premium').value;
+  const res = await fetch('/api/settings', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({max_option_premium_usd: parseFloat(premium)})
+  });
+  const data = await res.json();
+  if (data.error) { toast(data.error, false); return; }
+  toast('Option premium limit saved');
+}
+
+// ── News digest ───────────────────────────────────────────────────────────────
+async function loadDigestStatus() {
+  try {
+    const res  = await fetch('/api/news/digest/status');
+    const data = await res.json();
+    const count = document.getElementById('stat-digest-count');
+    const time  = document.getElementById('stat-digest-time');
+    const btn   = document.getElementById('btn-digest-run');
+    count.textContent = data.running ? '⏳ running…' : (data.last_count + ' articles');
+    time.textContent  = data.last_run || 'Never';
+    btn.disabled      = !!data.running;
+    btn.title         = data.running ? 'Running…' : 'Run news digest now';
+  } catch(e) { /* non-fatal */ }
+}
+
+async function runDigestNow() {
+  const btn = document.getElementById('btn-digest-run');
+  btn.disabled = true;
+  const res  = await fetch('/api/news/digest/run', {method:'POST'});
+  const data = await res.json();
+  if (data.error) { toast(data.error, false); btn.disabled = false; return; }
+  toast('News digest started');
+  setTimeout(loadDigestStatus, 3000);
+}
+
+// ── OCC symbol helper ─────────────────────────────────────────────────────────
+function parseOccSymbol(sym) {
+  const m = sym.match(/^([A-Z]{1,6})(\d{6})([CP])(\d{8})$/);
+  if (!m) return null;
+  const d = m[2];
+  const expiry = `20${d.slice(0,2)}-${d.slice(2,4)}-${d.slice(4,6)}`;
+  const strike = (parseInt(m[4]) / 1000).toFixed(2);
+  return {underlying: m[1], expiry, type: m[3] === 'C' ? 'Call' : 'Put', strike};
 }
 
 // ── Ingest toggle ─────────────────────────────────────────────────────────────
@@ -796,6 +953,7 @@ async function refreshData() {
     document.getElementById('footer-ts').textContent =
       'Last updated: ' + new Date().toLocaleTimeString() + ' · Auto-refresh every 30s';
   } catch(e) { console.warn('Refresh error', e); }
+  loadPositions();
 }
 
 setInterval(refreshData, 30000);
@@ -897,7 +1055,150 @@ async function kbDelete(id) {
 loadDbStats();
 loadResources();
 loadKB();
+loadPositions();
+loadDigestStatus();
+setInterval(loadDigestStatus, 60000); // Refresh digest status every minute
 setInterval(loadKB, 120000);  // Refresh KB list every 2 min
+// ── Holdings ──────────────────────────────────────────────────────────────────
+async function loadPositions() {
+  try {
+    const res   = await fetch('/api/positions');
+    const data  = await res.json();
+    const badge = document.getElementById('holdings-count-badge');
+    const tbody = document.getElementById('holdings-body');
+    if (!Array.isArray(data) || !data.length) {
+      badge.textContent = '0 positions';
+      tbody.innerHTML   = '<tr><td colspan="8" class="no-data">No open positions</td></tr>';
+      return;
+    }
+    badge.textContent = data.length + ' position' + (data.length !== 1 ? 's' : '');
+    tbody.innerHTML   = data.map(p => {
+      const pnlPos  = p.unrealized_pnl >= 0;
+      const pctPos  = p.pct_change     >= 0;
+      const pnlSign = p.unrealized_pnl >= 0 ? '+' : '';
+      const pctSign = p.pct_change     >= 0 ? '+' : '';
+      // Enrich OCC option symbols for display
+      const occ = parseOccSymbol(p.symbol);
+      const displaySym = occ
+        ? `<strong>${occ.underlying}</strong>
+           <span style="font-size:11px;color:var(--muted);display:block;">
+             ${occ.type} $${occ.strike} exp&nbsp;${occ.expiry}
+           </span>`
+        : `<strong>${p.symbol}</strong>`;
+      return `<tr id="holding-${p.symbol}">
+        <td>${displaySym}</td>
+        <td>${p.qty}</td>
+        <td>$${p.avg_entry}</td>
+        <td>$${p.current_price}</td>
+        <td class="${pnlPos ? 'holding-pnl-pos' : 'holding-pnl-neg'}">${pnlSign}$${p.unrealized_pnl}</td>
+        <td class="${pctPos ? 'holding-pnl-pos' : 'holding-pnl-neg'}">${pctSign}${p.pct_change}%</td>
+        <td>$${p.market_value.toLocaleString()}</td>
+        <td><button class="btn btn-danger" style="padding:3px 10px;font-size:12px;"
+              onclick="liquidatePosition('${p.symbol}')">Liquidate</button></td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.warn('Holdings error', e); }
+}
+
+async function liquidatePosition(sym) {
+  if (!confirm(`Liquidate ${sym}? This will close / log a sell for this position.`)) return;
+  const res  = await fetch('/api/positions/liquidate', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({symbol: sym})
+  });
+  const data = await res.json();
+  if (data.error) { toast('Error: ' + data.error, false); return; }
+  toast(`${sym} liquidated (${data.status})`, true);
+  loadPositions();
+  refreshData();
+}
+
+async function liquidateAll() {
+  const badge = document.getElementById('holdings-count-badge');
+  const cnt   = parseInt(badge.textContent) || 0;
+  if (!cnt) { toast('No open positions to liquidate', false); return; }
+  if (!confirm(`Liquidate ALL ${cnt} position(s)? This cannot be undone.`)) return;
+  const res  = await fetch('/api/positions/liquidate-all', {method:'POST'});
+  const data = await res.json();
+  if (data.error) { toast('Error: ' + data.error, false); return; }
+  toast(`All ${data.closed || cnt} positions liquidated`, true);
+  loadPositions();
+  refreshData();
+}
+
+async function aiReviewPositions() {
+  const panel   = document.getElementById('ai-review-panel');
+  const summary = document.getElementById('ai-review-summary');
+  const recs    = document.getElementById('ai-review-recs');
+  const btn     = document.getElementById('btn-ai-review');
+
+  panel.classList.add('visible');
+  summary.textContent = '⏳ Analyzing positions…';
+  recs.innerHTML      = '';
+  btn.disabled        = true;
+  btn.textContent     = '⏳ Analyzing…';
+
+  let fullText = '';
+  try {
+    const res = await fetch('/api/positions/ai-review', {method:'POST'});
+    if (!res.ok) {
+      const err = await res.json();
+      summary.textContent = '⚠ ' + (err.error || 'Error');
+      return;
+    }
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      for (const line of decoder.decode(value).split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const chunk = line.slice(6);
+        if (chunk.trim() === '[DONE]') break;
+        try {
+          const obj = JSON.parse(chunk);
+          if (obj.content) fullText += obj.content;
+          if (obj.error)   summary.textContent = '⚠ ' + obj.error;
+        } catch(e) {}
+      }
+    }
+  } catch(e) {
+    summary.textContent = '⚠ Connection error: ' + e.message;
+    return;
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '🤖 AI Review';
+  }
+
+  // Parse JSON response from LLM
+  try {
+    const start  = fullText.indexOf('{');
+    const end    = fullText.lastIndexOf('}') + 1;
+    const parsed = JSON.parse(fullText.slice(start, end));
+    summary.textContent = parsed.summary || '';
+    if (parsed.positions && parsed.positions.length) {
+      recs.innerHTML = parsed.positions.map(p => {
+        const isLiq = p.action === 'liquidate';
+        return `<div class="ai-rec" id="ai-rec-${escHtml(p.symbol)}">
+          <span class="ai-rec-sym">${escHtml(p.symbol)}</span>
+          <span class="ai-rec-action ${escHtml(p.action)}">${isLiq ? '⬇ LIQUIDATE' : '✓ HOLD'}</span>
+          <span class="ai-rec-urgency ${escHtml(p.urgency || 'low')}">[${(p.urgency||'low').toUpperCase()}]</span>
+          <span class="ai-rec-reason">${escHtml(p.reasoning || '')}</span>
+          ${isLiq ? `<button class="btn-accept" onclick="liquidatePosition('${escHtml(p.symbol)}')">Accept &amp; Close</button>` : ''}
+        </div>`;
+      }).join('');
+    } else {
+      recs.innerHTML = '<div style="color:var(--muted);font-size:12px;">No specific per-position recommendations.</div>';
+    }
+  } catch(e) {
+    summary.textContent = fullText;  // Show raw text if JSON parsing fails
+  }
+}
+
+function closeAiPanel() {
+  document.getElementById('ai-review-panel').classList.remove('visible');
+}
+
 </script>
 </body>
 </html>

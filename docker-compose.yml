@@ -74,6 +74,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  digest:
+    build: .
+    container_name: ff_digest
+    command: python ingest/news_digest.py
+    environment:
+      - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+      - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
+    mem_limit: 384m
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   api:
     build: .
     container_name: ff_api
