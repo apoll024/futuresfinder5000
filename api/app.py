@@ -576,6 +576,128 @@ def wallet_refresh():
         return jsonify({"configured": False, "error": str(e)})
 
 
+@app.route("/stocks")
+@login_required
+def stocks_page():
+    symbols    = get_symbols()
+    trade_mode = get_trade_mode()
+    ingest_st  = get_ingest_status()
+    now        = datetime.now(ET)
+    return render_template("stocks.html",
+        signals             = latest_signals(symbols),
+        trades              = recent_trades(),
+        stats               = daily_stats(),
+        trade_mode          = trade_mode,
+        trading_on          = trade_mode in ("paper", "live"),
+        ingest_running      = ingest_st.get("running"),
+        approved_capital    = get_approved_capital(),
+        max_position        = get_max_position(),
+        daily_loss_limit    = get_daily_loss_limit(),
+        options_enabled     = get_options_enabled(),
+        max_option_premium  = get_max_option_premium(),
+        stocks_enabled      = get_stocks_enabled(),
+        ollama_ok           = ollama_healthy(),
+        now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
+        market_open         = "09:45" <= now.strftime("%H:%M") <= "15:45",
+    )
+
+
+@app.route("/api/coinbase/holdings")
+@login_required
+def coinbase_holdings():
+    """Return Coinbase account balances with USD values from current prices."""
+    from trade.coinbase_client import is_configured, get_portfolio_summary
+    if not is_configured():
+        return jsonify({"configured": False, "balances": []})
+    summary = get_portfolio_summary()
+    db = Session()
+    try:
+        for bal in summary.get("balances", []):
+            currency = bal.get("currency", "")
+            if currency in ("USD", "USDC", "USDT", "DAI"):
+                bal["usd_value"] = float(bal.get("balance", 0))
+            else:
+                bar = (db.query(Bar)
+                       .filter(Bar.symbol.in_([f"{currency}/USD", f"{currency}USD"]))
+                       .order_by(Bar.ts.desc())
+                       .first())
+                if bar:
+                    bal["usd_value"] = round(float(bal.get("balance", 0)) * float(bar.close), 2)
+                else:
+                    bal["usd_value"] = None
+    finally:
+        db.close()
+    return jsonify(summary)
+
+
+@app.route("/api/coinbase/readiness")
+@login_required
+def coinbase_readiness():
+    """Per-symbol trade readiness: checks USD balance vs per-coin limit."""
+    from trade.coinbase_client import is_configured, get_crypto_balance
+    symbols = get_crypto_symbols()
+    result  = {}
+    if not is_configured():
+        for sym in symbols:
+            result[sym] = {"status": "error", "reason": "Coinbase API not configured"}
+        return jsonify({"symbols": result})
+    try:
+        usd_balance = get_crypto_balance("USD")
+        usdc_balance = get_crypto_balance("USDC")
+        total_usd = usd_balance + usdc_balance
+    except Exception as e:
+        for sym in symbols:
+            result[sym] = {"status": "error", "reason": f"Coinbase API error: {e}"}
+        return jsonify({"symbols": result})
+    for sym in symbols:
+        base  = sym.split("/")[0]
+        key   = f"coin_limit_{sym.replace('/', '_')}"
+        limit = float(get_setting(key, str(get_max_position())))
+        try:
+            coin_bal = get_crypto_balance(base)
+            if total_usd >= limit:
+                status = "ready"
+                reason = f"${total_usd:.2f} USD available (limit: ${limit:.0f})"
+            elif total_usd > 0:
+                status = "warning"
+                reason = f"${total_usd:.2f} USD < limit ${limit:.0f} — add funds"
+            else:
+                status = "error"
+                reason = "No USD balance — deposit via Coinbase app"
+            result[sym] = {
+                "status":       status,
+                "reason":       reason,
+                "usd_balance":  round(total_usd, 2),
+                "coin_balance": round(coin_bal, 8),
+                "limit":        limit,
+            }
+        except Exception as e:
+            result[sym] = {"status": "error", "reason": str(e)}
+    return jsonify({"symbols": result})
+
+
+@app.route("/api/crypto/coin-limits", methods=["GET", "POST"])
+@login_required
+def coin_limits():
+    """Get or set per-coin trade size limits (stored in settings table)."""
+    symbols = get_crypto_symbols()
+    if request.method == "GET":
+        limits = {}
+        for sym in symbols:
+            key = f"coin_limit_{sym.replace('/', '_')}"
+            limits[sym] = float(get_setting(key, str(get_max_position())))
+        return jsonify({"limits": limits})
+    data   = request.json or {}
+    limits = data.get("limits", {})
+    for sym, val in limits.items():
+        key = f"coin_limit_{sym.replace('/', '_')}"
+        try:
+            set_setting(key, str(float(val)))
+        except (ValueError, TypeError):
+            pass
+    return jsonify({"saved": True, "limits": limits})
+
+
 @app.route("/api/settings", methods=["POST"])
 @login_required
 def update_settings():

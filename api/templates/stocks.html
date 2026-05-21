@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FF5000 · Crypto Command</title>
+  <title>FF5000 · Stocks</title>
   <style>
     :root {
       --bg:         #060608;
@@ -111,7 +111,7 @@
 
     /* ══ PAGE LAYOUT ══════════════════════════════════════════════════════════ */
     .page-body {
-      display: grid; grid-template-columns: 1fr 310px;
+      display: grid; grid-template-columns: 1fr 300px;
       min-height: calc(100vh - 90px);
     }
     @media (max-width: 1080px) {
@@ -477,25 +477,6 @@
     .toast.show { opacity: 1; }
     .toast.ok  { background: rgba(16,185,129,.15); color: var(--green2); border: 1px solid rgba(16,185,129,.35); }
     .toast.err { background: rgba(239,68,68,.15);  color: var(--red2);   border: 1px solid rgba(239,68,68,.35); }
-
-    /* ── Coinbase wallet management ── */
-    .cb-status-ready  { background: rgba(16,185,129,.1);  color: var(--green2);  border-color: rgba(16,185,129,.3); }
-    .cb-status-warn   { background: rgba(217,119,6,.1);   color: #fbbf24;        border-color: rgba(217,119,6,.3); }
-    .cb-status-error  { background: rgba(239,68,68,.1);   color: var(--red2);    border-color: rgba(239,68,68,.3); }
-    .coin-limit-item  { display:flex; flex-direction:column; gap:3px; min-width:110px; }
-    .coin-limit-label { font-size:9px; color:var(--muted); font-weight:700; letter-spacing:.5px; text-transform:uppercase; }
-    .coin-limit-input { background:var(--surface2); border:1px solid var(--border2); color:var(--text); padding:4px 8px; border-radius:5px; width:100%; }
-    .coin-limit-input:focus { outline:none; border-color:var(--purple); }
-    .readiness-item   { display:flex; align-items:center; gap:6px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface); font-size:10px; min-width:140px; }
-    .readiness-dot    { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-    .readiness-dot.ready  { background:var(--green2); box-shadow: 0 0 6px var(--green2); }
-    .readiness-dot.warn   { background:#fbbf24; }
-    .readiness-dot.error  { background:var(--red2); }
-    .cb-balance-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid var(--border); font-size:10px; }
-    .cb-balance-row:last-child { border-bottom:none; }
-    .cb-balance-currency { font-weight:700; color:var(--purple3); }
-    .cb-balance-amount   { color:var(--text); }
-    .cb-balance-usd      { color:var(--muted); font-size:9px; }
   </style>
 </head>
 <body>
@@ -503,26 +484,25 @@
 <!-- ═══ HEADER ═══════════════════════════════════════════════════════════════ -->
 <header>
   <div class="logo">
-    <div class="logo-icon">₿</div>
+    <div class="logo-icon">📈</div>
     <div class="logo-text">
       <div class="name">FF5000</div>
-      <div class="sub">Crypto Command</div>
+      <div class="sub">Stocks</div>
     </div>
   </div>
 
   <div class="badges">
     <span class="badge {{ 'green' if ollama_ok else 'red' }}" id="badge-llm">LLM {{ '✓' if ollama_ok else '✗' }}</span>
-    <span class="badge {{ 'green' if market_open else 'yellow' }}" id="badge-market">Market {{ 'Open' if market_open else 'Closed' }}</span>
-    <span class="badge blue" id="badge-mode">{{ trade_mode.upper() }}</span>
-    <span class="badge {{ 'green' if ingest_running == True else ('red' if ingest_running == False else 'yellow') }}" id="badge-ingest">
+    <span class="badge {{ 'green' if market_open else 'purple' }}" id="badge-market">Market {{ 'Open' if market_open else 'Closed' }}</span>
+    <span class="badge purple" id="badge-mode">{{ trade_mode.upper() }}</span>
+    <span class="badge {{ 'green' if ingest_running == True else ('red' if ingest_running == False else 'purple') }}" id="badge-ingest">
       Ingest {{ '▶' if ingest_running == True else ('■' if ingest_running == False else '?') }}
     </span>
   </div>
 
   <div class="hdr-right">
-    <a class="toggle-btn on crypto" href="/stocks" style="text-decoration:none;">📈 Stocks</a>
-    <button class="toggle-btn {{ 'on crypto' if crypto_enabled else 'off' }}" id="crypto-toggle" onclick="toggleCrypto()">
-      {{ '₿ CRYPTO ON' if crypto_enabled else '○ CRYPTO OFF' }}
+    <button class="toggle-btn {{ 'on' if stocks_enabled else 'off' }}" id="stocks-toggle" onclick="toggleStocks()">
+      {{ '📈 STOCKS ON' if stocks_enabled else '○ STOCKS OFF' }}
     </button>
     <button class="toggle-btn {{ 'on' if trading_on else 'off' }}" id="trade-toggle" onclick="toggleTrading()">
       {{ '● LIVE' if trading_on else '○ OFF' }}
@@ -530,17 +510,10 @@
     <button class="toggle-btn {{ 'on' if ingest_running == True else 'off' }}" id="ingest-toggle" onclick="toggleIngest()">
       {{ '▶ FEED' if ingest_running == True else '■ FEED' }}
     </button>
-    <a class="logout-link" href="/logout">⏻</a>
+    <a class="toggle-btn on crypto" href="/" style="text-decoration:none;">← Crypto</a>
+    <a class="logout-link" href="/logout">Logout</a>
   </div>
 </header>
-
-<!-- ═══ TICKER BAR ════════════════════════════════════════════════════════════ -->
-<div class="ticker-bar">
-  <div class="ticker-track" id="ticker-track">
-    <!-- Populated by loadMarketData() -->
-    <div class="ticker-item"><span class="ticker-sym">BTC</span><span class="ticker-price">Loading…</span></div>
-  </div>
-</div>
 
 <!-- ═══ PAGE BODY (main + sidebar) ══════════════════════════════════════════ -->
 <div class="page-body">
@@ -553,16 +526,16 @@
       <div class="ctrl-row">
 
         <div class="ctrl-group">
-          <label>Crypto Symbols</label>
+          <label>Stock Symbols</label>
           <div class="input-row">
-            <input type="text" id="crypto-sym-input" placeholder="BTC/USD" maxlength="10"
-                   onkeydown="if(event.key==='Enter') addCryptoSymbol()">
-            <button class="btn btn-add" onclick="addCryptoSymbol()">+ Add</button>
+            <input type="text" id="sym-input" placeholder="TQQQ" maxlength="10"
+                   onkeydown="if(event.key==='Enter') addSymbol()">
+            <button class="btn btn-add" onclick="addSymbol()">+ Add</button>
           </div>
-          <div class="chips" id="crypto-sym-chips">
-            {% for s in crypto_symbols %}
-            <span class="chip crypto" id="crypto-chip-{{ s|replace('/', '_') }}">
-              {{ s }}<button class="btn-remove" onclick="removeCryptoSymbol('{{ s }}')">✕</button>
+          <div class="chips" id="sym-chips">
+            {% for s in signals if '/' not in s.symbol %}
+            <span class="chip" id="chip-{{ s.symbol }}">
+              {{ s.symbol }}<button class="btn-remove" onclick="removeSymbol('{{ s.symbol }}')">✕</button>
             </span>
             {% endfor %}
           </div>
@@ -595,6 +568,32 @@
         <div class="ctrl-group">
           <label>&nbsp;</label>
           <button class="btn btn-save" onclick="saveSettings()">Save Limits</button>
+        </div>
+
+        <div class="ctrl-group">
+          <label>Options</label>
+          <button id="options-toggle" class="btn {% if options_enabled %}btn-danger{% else %}btn-save{% endif %}"
+                  onclick="toggleOptions()">
+            {% if options_enabled %}⚡ On{% else %}○ Off{% endif %}
+          </button>
+        </div>
+
+        <div class="ctrl-group" id="option-premium-group" {% if not options_enabled %}style="display:none;"{% endif %}>
+          <label>Max Premium</label>
+          <div class="input-row">
+            <span style="color:var(--muted)">$</span>
+            <input type="number" id="max-option-premium" value="{{ max_option_premium|int }}" min="10" step="10">
+            <button class="btn btn-save" onclick="saveOptionSettings()">Save</button>
+          </div>
+        </div>
+
+        <div class="ctrl-group">
+          <label>Backfill</label>
+          <div class="input-row">
+            <input type="text" id="backfill-sym" placeholder="TQQQ" maxlength="10"
+                   onkeydown="if(event.key==='Enter') triggerBackfill()" style="width:80px;">
+            <button class="btn btn-save" onclick="triggerBackfill()">▼ Fetch</button>
+          </div>
         </div>
 
       </div>
@@ -665,22 +664,21 @@
       </div>
     </div>
 
-    <!-- ── Crypto Signals ── -->
-    {% set _cc = namespace(n=0) %}{% for s in signals %}{% if '/' in s.symbol %}{% set _cc.n = _cc.n + 1 %}{% endif %}{% endfor %}
+    <!-- ── Stock Signals ── -->
+    {% set _sc = namespace(n=0) %}{% for s in signals %}{% if '/' not in s.symbol %}{% set _sc.n = _sc.n + 1 %}{% endif %}{% endfor %}
     <div class="sec-hdr">
-      <span class="dot purple"></span>
-      ₿ Crypto Signals
-      <span class="count" id="crypto-sig-count">{{ _cc.n }}</span>
+      <span class="dot grey"></span>
+      📈 Stock Signals
+      <span class="count" id="stock-sig-count">{{ _sc.n }}</span>
     </div>
-    <div class="signals-grid" id="crypto-signals-grid">
-      {% for s in signals if '/' in s.symbol %}
+    <div class="signals-grid" id="signals-grid">
+      {% for s in signals if '/' not in s.symbol %}
       {% set act = s.action if s.action != '—' else 'none' %}
-      <div class="sig-card crypto-card {{ act }}" id="sigcard-{{ s.symbol|replace('/', '_') }}">
+      <div class="sig-card {{ act }}" id="sigcard-{{ s.symbol }}">
         <div class="sig-hdr">
           <div class="sig-sym-block">
             <div class="sig-sym-row">
-              <span class="sig-symbol">{{ s.symbol.split('/')[0] }}</span>
-              <span class="crypto-tag">CRYPTO</span>
+              <span class="sig-symbol">{{ s.symbol }}</span>
             </div>
             {% if s.last_price %}<div class="sig-price">${{ s.last_price }}</div>{% endif %}
           </div>
@@ -690,9 +688,11 @@
         <div class="indics">
           {% if s.indicators.close    %}<span class="indic">${{ s.indicators.close }}</span>{% endif %}
           {% if s.indicators.vwap     %}<span class="indic {{ 'up' if s.indicators.above_vwap else 'down' }}">VWAP ${{ s.indicators.vwap }}</span>{% endif %}
-          {% if s.indicators.rsi_14   %}<span class="indic">RSI {{ s.indicators.rsi_14 }}</span>{% endif %}
+          {% if s.indicators.rsi_9    %}<span class="indic">RSI {{ s.indicators.rsi_9 }}</span>{% endif %}
+          {% if s.indicators.rsi_14   %}<span class="indic">RSI14 {{ s.indicators.rsi_14 }}</span>{% endif %}
           {% if s.indicators.bb_pct_b %}<span class="indic">BB%B {{ s.indicators.bb_pct_b }}</span>{% endif %}
           {% if s.indicators.volume_ratio %}<span class="indic {{ 'up' if s.indicators.volume_ratio > 1.5 else '' }}">Vol {{ s.indicators.volume_ratio }}x</span>{% endif %}
+          {% if s.indicators.or_breakout %}<span class="indic {{ 'up' if s.indicators.or_breakout == 'above' else 'down' if s.indicators.or_breakout == 'below' else '' }}">OR:{{ s.indicators.or_breakout }}</span>{% endif %}
         </div>
         <div class="sig-reason">{{ s.reasoning[:180] }}</div>
         <div class="sig-meta">
@@ -701,99 +701,8 @@
         </div>
       </div>
       {% else %}
-      <div style="color:var(--muted);font-size:11px;padding:14px;grid-column:1/-1;">
-        No crypto signals yet — add symbols above and enable ₿ CRYPTO.
-      </div>
+      <div style="color:var(--muted);font-size:11px;padding:14px;grid-column:1/-1;">No stock signals yet.</div>
       {% endfor %}
-    </div>
-
-    <!-- ── Coinbase Wallet Management ── -->
-    <div class="sec-hdr">
-      <span class="dot purple"></span>
-      💰 Coinbase Wallet
-      <span class="badge" id="cb-status-badge">Checking…</span>
-      <span style="margin-left:auto;font-size:10px;color:var(--muted);" id="cb-portfolio-total"></span>
-    </div>
-    <div class="section">
-      <div style="margin-bottom:12px;">
-        <div style="font-size:10px;font-weight:800;color:var(--purple2);margin-bottom:6px;letter-spacing:.5px;">ACCOUNT HOLDINGS</div>
-        <table id="cb-holdings-table" style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead>
-            <tr style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.5px;">
-              <th style="text-align:left;padding:4px 6px;">Currency</th>
-              <th style="text-align:right;padding:4px 6px;">Balance</th>
-              <th style="text-align:right;padding:4px 6px;">USD Value</th>
-              <th style="text-align:right;padding:4px 6px;">Status</th>
-            </tr>
-          </thead>
-          <tbody id="cb-holdings-body">
-            <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:12px;">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <div style="font-size:10px;font-weight:800;color:var(--purple2);letter-spacing:.5px;">PER-COIN TRADE LIMITS</div>
-          <button class="btn btn-save" onclick="saveCoinLimits()">Save Limits</button>
-        </div>
-        <div id="coin-limits-grid" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
-      </div>
-
-      <div style="margin-bottom:12px;">
-        <div style="font-size:10px;font-weight:800;color:var(--purple2);margin-bottom:6px;letter-spacing:.5px;">TRADE READINESS</div>
-        <div id="readiness-grid" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
-      </div>
-
-      <div class="sec-hdr clickable" onclick="toggleSection('fund-guide-body','fund-guide-chev')" style="border-radius:6px;margin-bottom:4px;">
-        <span>📥 How to Fund Your Account</span>
-        <span class="chevron" id="fund-guide-chev">▶</span>
-      </div>
-      <div id="fund-guide-body" class="collapsible hidden">
-        <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;line-height:1.7;color:var(--text);">
-          <div style="font-weight:800;color:var(--purple2);margin-bottom:8px;">To fund the trading bot:</div>
-          <ol style="padding-left:18px;display:flex;flex-direction:column;gap:5px;">
-            <li>Open the <strong>Coinbase app</strong> or visit <a href="https://coinbase.com" target="_blank">coinbase.com</a></li>
-            <li>Go to <strong>Portfolio → Add Funds</strong></li>
-            <li>Connect your bank account or debit card</li>
-            <li>Purchase <strong>USDC</strong> (recommended — no volatility) or deposit USD directly</li>
-            <li>Funds appear as <strong>USD/USDC balance</strong> in your Coinbase account within minutes</li>
-            <li>The bot uses USD balance to <strong>buy</strong> crypto, and uses your coin balance when <strong>selling</strong></li>
-          </ol>
-          <div style="margin-top:10px;padding:8px;background:var(--surface2);border-radius:5px;border:1px solid var(--border2);font-size:10px;color:var(--muted);">
-            💡 <strong>Tip:</strong> Keep a USD buffer equal to the sum of all your per-coin limits.
-            Example: BTC limit $200 + ETH limit $150 + SOL limit $100 = keep <strong>$450+ USD</strong> in Coinbase.
-          </div>
-          <div style="margin-top:8px;font-size:10px;color:var(--muted);">
-            ⚠ The API <strong>cannot</strong> initiate bank transfers or charge your debit card — funding must be done manually through the Coinbase app/website.
-          </div>
-        </div>
-      </div>
-
-      <div class="sec-hdr clickable" onclick="toggleSection('convert-guide-body','convert-guide-chev')" style="border-radius:6px;">
-        <span>🔄 Coin Conversion & What to Deposit</span>
-        <span class="chevron" id="convert-guide-chev">▶</span>
-      </div>
-      <div id="convert-guide-body" class="collapsible hidden">
-        <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;line-height:1.7;color:var(--text);">
-          <div style="font-weight:800;color:var(--purple2);margin-bottom:8px;">How the bot trades altcoins:</div>
-          <ul style="padding-left:18px;display:flex;flex-direction:column;gap:4px;">
-            <li><strong>BUY signals:</strong> Uses your USD balance to buy the coin (e.g., USD → BTC)</li>
-            <li><strong>SELL signals:</strong> Sells your coin balance back to USD (e.g., BTC → USD)</li>
-            <li>All pairs trade against USD — the bot does not do coin-to-coin swaps</li>
-          </ul>
-          <div style="margin-top:10px;font-weight:800;color:var(--purple2);margin-bottom:6px;">To trade a new altcoin:</div>
-          <ol style="padding-left:18px;display:flex;flex-direction:column;gap:4px;">
-            <li>Add the pair above (e.g., <code>AVAX/USD</code>)</li>
-            <li>Make sure you have <strong>USD balance</strong> ≥ the coin limit for buy signals</li>
-            <li>For sell signals, you need the coin itself — buy it via Coinbase app first if needed</li>
-            <li>Use Coinbase app to convert between coins if you hold, e.g., ETH and want to hold BTC instead</li>
-          </ol>
-          <div style="margin-top:8px;padding:8px;background:var(--surface2);border-radius:5px;border:1px solid var(--border2);font-size:10px;color:var(--muted);">
-            💡 <strong>Supported on Coinbase:</strong> BTC, ETH, SOL, AVAX, MATIC, DOT, ADA, LINK, UNI, DOGE, SHIB, LTC, XRP, ATOM, NEAR, APT — and most other major pairs
-          </div>
-        </div>
-      </div>
     </div>
     <!-- ── Current Holdings ── -->
     <div class="sec-hdr">
@@ -874,51 +783,6 @@
   <!-- ══ SIDEBAR ══════════════════════════════════════════════════════════════ -->
   <div class="side-col">
 
-    <!-- ── Market Panel ── -->
-    <div class="side-panel">
-      <div class="panel-hdr"><span class="dot"></span>Live Market</div>
-
-      <!-- Fear & Greed -->
-      <div class="fg-widget">
-        <div class="fg-row">
-          <div>
-            <div class="fg-sublabel">Fear &amp; Greed Index</div>
-            <div class="fg-number" id="fg-number">—</div>
-          </div>
-          <div style="flex:1;">
-            <div class="fg-label" id="fg-label">Loading…</div>
-            <div class="fg-trend" id="fg-trend"></div>
-          </div>
-        </div>
-        <div class="fg-bar-wrap">
-          <div class="fg-bar-track">
-            <div class="fg-bar-fill" id="fg-bar" style="width:50%"></div>
-          </div>
-          <div class="fg-ticks"><span>Extreme Fear</span><span>Neutral</span><span>Extreme Greed</span></div>
-        </div>
-      </div>
-
-      <!-- Coin List -->
-      <div class="coin-list" id="coin-list">
-        <div style="color:var(--muted);font-size:10px;text-align:center;padding:8px;">Loading market data…</div>
-      </div>
-
-      <!-- Trending -->
-      <div class="trending-area" id="trending-area" style="display:none;">
-        <div class="trend-lbl">🔥 Trending</div>
-        <div class="trend-chips" id="trend-chips"></div>
-      </div>
-    </div>
-
-    <!-- ── Coinbase Status (sidebar) ── -->
-    <div class="side-panel">
-      <div class="panel-hdr"><span class="dot purple"></span>Coinbase Account</div>
-      <div id="cb-sidebar-content">
-        <div style="color:var(--muted);font-size:10px;text-align:center;padding:8px;">Loading…</div>
-      </div>
-      <button class="btn-wallet-refresh" onclick="loadCoinbaseData(true)">↻ Refresh Balances</button>
-    </div>
-
     <!-- ── AI Chat ── -->
     <div class="side-panel">
       <div class="panel-hdr"><span class="dot"></span>AI Assistant</div>
@@ -926,11 +790,11 @@
         <div class="chat-messages" id="chat-messages">
           <div class="msg assistant">
             <div class="msg-label">FF5000</div>
-            Hello — monitoring your crypto &amp; stock watchlist. Ask me about signals, market conditions, strategy, or your positions.
+            Hello — monitoring your stock watchlist. Ask me about signals, setups, risk limits, or open positions.
           </div>
         </div>
         <div class="chat-input-row">
-          <textarea id="chat-input" rows="1" placeholder="Ask about signals, crypto, strategy…"
+          <textarea id="chat-input" rows="1" placeholder="Ask about stocks, signals, strategy…"
             onkeydown="chatKeydown(event)" oninput="autoResize(this)"></textarea>
           <button class="btn-send" id="chat-send" onclick="sendChat()">Send</button>
         </div>
@@ -1035,14 +899,14 @@ async function resetStat(scope) {
 // ════════════════════════════════════════════════════════════════════════════
 // TOGGLES
 // ════════════════════════════════════════════════════════════════════════════
-async function toggleCrypto() {
-  const btn = document.getElementById('crypto-toggle');
+async function toggleStocks() {
+  const btn = document.getElementById('stocks-toggle');
   btn.disabled = true;
-  const data = await fetch('/api/crypto/toggle', {method:'POST'}).then(r=>r.json());
-  const on   = data.crypto_enabled;
-  btn.className   = 'toggle-btn ' + (on ? 'on crypto' : 'off');
-  btn.textContent = on ? '₿ CRYPTO ON' : '○ CRYPTO OFF';
-  toast(on ? 'Crypto ENABLED' : 'Crypto DISABLED');
+  const data = await fetch('/api/stocks/toggle', {method:'POST'}).then(r=>r.json());
+  const on   = data.stocks_enabled;
+  btn.className   = 'toggle-btn ' + (on ? 'on' : 'off');
+  btn.textContent = on ? '📈 STOCKS ON' : '○ STOCKS OFF';
+  toast(on ? 'Stocks ENABLED' : 'Stocks DISABLED');
   btn.disabled = false;
 }
 
@@ -1075,32 +939,45 @@ async function toggleIngest() {
   finally { btn.disabled = false; }
 }
 
+async function toggleOptions() {
+  const btn   = document.getElementById('options-toggle');
+  const group = document.getElementById('option-premium-group');
+  const on    = !btn.textContent.trim().startsWith('⚡');
+  const data  = await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({options_enabled:on})}).then(r=>r.json());
+  if (data.error) { toast(data.error, false); return; }
+  btn.textContent = on ? '⚡ On' : '○ Off';
+  btn.className   = on ? 'btn btn-danger' : 'btn btn-save';
+  group.style.display = on ? '' : 'none';
+  toast('Options ' + (on ? 'enabled' : 'disabled'));
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // SYMBOLS
 // ════════════════════════════════════════════════════════════════════════════
-async function addCryptoSymbol() {
-  const inp = document.getElementById('crypto-sym-input');
+async function addSymbol() {
+  const inp = document.getElementById('sym-input');
   const sym = inp.value.trim().toUpperCase();
   if (!sym) return;
-  const data = await fetch('/api/crypto/symbols/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})}).then(r=>r.json());
+  const data = await fetch('/api/symbols/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})}).then(r=>r.json());
   if (data.error) { toast(data.error, false); return; }
   inp.value = '';
-  rebuildCryptoChips(data.crypto_symbols);
-  toast(sym + ' added to crypto watchlist');
+  rebuildChips(data.symbols);
+  toast(sym + ' added');
 }
 
-async function removeCryptoSymbol(sym) {
-  const data = await fetch('/api/crypto/symbols/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})}).then(r=>r.json());
-  rebuildCryptoChips(data.crypto_symbols);
+async function removeSymbol(sym) {
+  const data = await fetch('/api/symbols/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})}).then(r=>r.json());
+  rebuildChips(data.symbols);
+  const card = document.getElementById('sigcard-' + sym);
+  if (card) card.remove();
   toast(sym + ' removed');
 }
 
-function rebuildCryptoChips(symbols) {
-  const chips = document.getElementById('crypto-sym-chips');
-  chips.innerHTML = symbols.map(s => {
-    const id = s.replace('/','_');
-    return `<span class="chip crypto" id="crypto-chip-${id}">${s}<button class="btn-remove" onclick="removeCryptoSymbol('${s}')">✕</button></span>`;
-  }).join('');
+function rebuildChips(symbols) {
+  const chips = document.getElementById('sym-chips');
+  chips.innerHTML = symbols.map(s =>
+    `<span class="chip" id="chip-${s}">${s}<button class="btn-remove" onclick="removeSymbol('${s}')">✕</button></span>`
+  ).join('');
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1118,9 +995,26 @@ async function saveSettings() {
   toast('Limits saved');
 }
 
+async function saveOptionSettings() {
+  const premium = document.getElementById('max-option-premium').value;
+  const data    = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({max_option_premium_usd:parseFloat(premium)})}).then(r=>r.json());
+  if (data.error) { toast(data.error, false); return; }
+  toast('Option premium limit saved');
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // BACKFILL / DIGEST
 // ════════════════════════════════════════════════════════════════════════════
+async function triggerBackfill() {
+  const sym = document.getElementById('backfill-sym').value.trim().toUpperCase();
+  if (!sym) { toast('Enter a symbol first', false); return; }
+  const d = await fetch('/api/ingest/backfill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym,days:30})}).then(r=>r.json());
+  if (d.status === 'started') {
+    toast(`Backfill started for ${d.symbol} (${d.days}d)`);
+    document.getElementById('backfill-sym').value = '';
+  } else { toast('Backfill failed', false); }
+}
+
 async function loadDigestStatus() {
   try {
     const data = await fetch('/api/news/digest/status').then(r=>r.json());
@@ -1178,272 +1072,13 @@ async function loadResources() {
 // ════════════════════════════════════════════════════════════════════════════
 // MARKET DATA — Fear & Greed + Coins + Ticker
 // ════════════════════════════════════════════════════════════════════════════
-function fgClass(v) {
-  if (v <= 25) return 'extreme-fear';
-  if (v <= 45) return 'fear';
-  if (v <= 55) return 'neutral';
-  if (v <= 75) return 'greed';
-  return 'extreme-greed';
-}
-
-function buildSparkline(prices) {
-  if (!prices || prices.length < 2) return '';
-  const pts  = prices.slice(-24);   // last 24 hours
-  const min  = Math.min(...pts);
-  const max  = Math.max(...pts);
-  const rng  = max - min || 1;
-  const W = 40, H = 16;
-  const coords = pts.map((p,i) => {
-    const x = (i / (pts.length - 1)) * W;
-    const y = H - ((p - min) / rng) * (H - 2) - 1;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  const color = pts[pts.length-1] >= pts[0] ? 'var(--green2)' : 'var(--red2)';
-  return `<svg viewBox="0 0 ${W} ${H}" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <polyline points="${coords}" stroke="${color}" stroke-width="1.2" fill="none"/>
-  </svg>`;
-}
-
-function fmtPrice(p) {
-  if (!p && p !== 0) return '—';
-  if (p >= 1000)  return '$' + p.toLocaleString(undefined,{maximumFractionDigits:0});
-  if (p >= 1)     return '$' + p.toFixed(2);
-  return '$' + p.toFixed(4);
-}
-
-async function loadMarketData() {
-  try {
-    const data = await fetch('/api/crypto/market').then(r => r.json());
-
-    // Fear & Greed
-    const fg  = data.fear_greed || {};
-    const val = fg.value ?? 50;
-    const cls = fgClass(val);
-    document.getElementById('fg-number').textContent = val;
-    document.getElementById('fg-number').className   = 'fg-number ' + cls;
-    document.getElementById('fg-label').textContent  = fg.label || 'Neutral';
-    const bar = document.getElementById('fg-bar');
-    bar.style.width = val + '%';
-    bar.className   = 'fg-bar-fill ' + cls;
-    const trend = fg.trend;
-    if (trend && trend.direction) {
-      const arrow = trend.direction === 'up' ? '▲' : '▼';
-      const chg   = trend.change7d != null ? ` ${Math.abs(trend.change7d).toFixed(1)} pts 7d` : '';
-      document.getElementById('fg-trend').textContent = arrow + chg;
-    }
-
-    // Coin list
-    const coins  = data.coins || [];
-    const coinEl = document.getElementById('coin-list');
-    if (coins.length) {
-      coinEl.innerHTML = coins.slice(0, 10).map(c => {
-        const chg    = c.price_change_percentage_24h;
-        const chgStr = chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '—';
-        const chgCls = chg != null ? (chg >= 0 ? 'up' : 'down') : '';
-        const spark  = buildSparkline(c.sparkline_in_7d?.price);
-        return `<div class="coin-row">
-          <span class="coin-rank">#${c.market_cap_rank||'?'}</span>
-          <span class="coin-sym">${(c.symbol||'?').toUpperCase()}</span>
-          <span class="coin-name">${escHtml(c.name||'')}</span>
-          <span class="coin-price">${fmtPrice(c.current_price)}</span>
-          <span class="coin-chg ${chgCls}">${chgStr}</span>
-          <span class="coin-spark">${spark}</span>
-        </div>`;
-      }).join('');
-    }
-
-    // Trending
-    const trending = data.trending || [];
-    if (trending.length) {
-      const area  = document.getElementById('trending-area');
-      area.style.display = '';
-      document.getElementById('trend-chips').innerHTML =
-        trending.map(t => `<span class="trend-chip">${escHtml(String(t))}</span>`).join('');
-    }
-
-    // Ticker bar — duplicate content for seamless scroll
-    const tickerItems = coins.slice(0, 12).map(c => {
-      const chg    = c.price_change_percentage_24h;
-      const chgStr = chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '';
-      const chgCls = chg != null ? (chg >= 0 ? 'up' : 'down') : '';
-      return `<div class="ticker-item">
-        <span class="ticker-sym">${(c.symbol||'').toUpperCase()}</span>
-        <span class="ticker-price">${fmtPrice(c.current_price)}</span>
-        ${chgStr ? `<span class="ticker-chg ${chgCls}">${chgStr}</span>` : ''}
-        <span class="ticker-sep">◆</span>
-      </div>`;
-    }).join('');
-    const track = document.getElementById('ticker-track');
-    // Duplicate for seamless loop
-    track.innerHTML = tickerItems + tickerItems;
-
-  } catch(e) { console.warn('Market data error', e); }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // WALLET
 // ════════════════════════════════════════════════════════════════════════════
 // ════════════════════════════════════════════════════════════════════════════
-// COINBASE WALLET MANAGEMENT
-// ════════════════════════════════════════════════════════════════════════════
-
-let _cbHoldings  = [];
-let _cbLimits    = {};
-let _cbReadiness = {};
-
-async function loadCoinbaseData(force=false) {
-  await Promise.all([
-    loadCbHoldings(force),
-    loadCbLimits(),
-    loadCbReadiness(),
-  ]);
-  updateCbSidebar();
-}
-
-async function loadCbHoldings(force=false) {
-  try {
-    const url = force ? '/api/coinbase/holdings?refresh=1' : '/api/coinbase/holdings';
-    const data = await fetch(url).then(r=>r.json());
-    const badge = document.getElementById('cb-status-badge');
-    const tbody = document.getElementById('cb-holdings-body');
-
-    if (!data.configured) {
-      badge.textContent = '✗ Not Configured';
-      badge.className = 'badge red';
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted);font-size:11px;">
-        Set <strong>COINBASE_API_KEY_NAME</strong> and <strong>COINBASE_API_PRIVATE_KEY</strong><br>in your .env file to connect Coinbase.
-      </td></tr>`;
-      _cbHoldings = [];
-      return;
-    }
-    if (data.error) {
-      badge.textContent = '⚠ API Error';
-      badge.className = 'badge yellow';
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--red2);font-size:10px;">${escHtml(data.error)}</td></tr>`;
-      return;
-    }
-
-    _cbHoldings = data.balances || [];
-    badge.textContent = '● Connected';
-    badge.className = 'badge green';
-
-    let totalUsd = 0;
-    _cbHoldings.forEach(b => { if (b.usd_value) totalUsd += b.usd_value; });
-    const totEl = document.getElementById('cb-portfolio-total');
-    if (totEl) totEl.textContent = 'Portfolio: ' + fmt$(totalUsd);
-
-    if (!_cbHoldings.length) {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--muted);">No holdings yet — deposit funds via Coinbase app</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = _cbHoldings.map(b => {
-      const usdVal = b.usd_value != null ? fmt$(b.usd_value) : '—';
-      const isCash = b.currency === 'USD' || b.currency === 'USDC' || b.currency === 'USDT';
-      const statusHtml = isCash
-        ? `<span style="color:var(--green2);font-size:9px;">💵 Buying Power</span>`
-        : `<span style="color:var(--purple3);font-size:9px;">🪙 Tradeable</span>`;
-      return `<tr style="border-bottom:1px solid var(--border);">
-        <td style="padding:5px 6px;font-weight:700;color:var(--purple3);">${escHtml(b.currency)}</td>
-        <td style="padding:5px 6px;text-align:right;">${(+b.balance||0) < 0.001 ? b.balance : Number(b.balance).toLocaleString(undefined,{maximumSignificantDigits:6})}</td>
-        <td style="padding:5px 6px;text-align:right;">${usdVal}</td>
-        <td style="padding:5px 6px;text-align:right;">${statusHtml}</td>
-      </tr>`;
-    }).join('');
-  } catch(e) {
-    console.warn('CB holdings error', e);
-    document.getElementById('cb-status-badge').textContent = '✗ Error';
-    document.getElementById('cb-status-badge').className = 'badge red';
-  }
-}
-
-async function loadCbLimits() {
-  try {
-    const data = await fetch('/api/crypto/coin-limits').then(r=>r.json());
-    _cbLimits = data.limits || {};
-    const grid = document.getElementById('coin-limits-grid');
-    if (!grid) return;
-    const symbols = Object.keys(_cbLimits);
-    if (!symbols.length) {
-      grid.innerHTML = '<div style="color:var(--muted);font-size:10px;">No crypto symbols configured yet.</div>';
-      return;
-    }
-    grid.innerHTML = symbols.map(sym => {
-      const id = 'limit-' + sym.replace('/','_');
-      return `<div class="coin-limit-item">
-        <div class="coin-limit-label">${escHtml(sym)}</div>
-        <div style="display:flex;align-items:center;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">$</span>
-          <input type="number" id="${id}" class="coin-limit-input" value="${_cbLimits[sym]||200}" min="10" step="10" style="width:85px;">
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) { console.warn('CB limits error', e); }
-}
-
-async function saveCoinLimits() {
-  const grid = document.getElementById('coin-limits-grid');
-  if (!grid) return;
-  const limits = {};
-  Object.keys(_cbLimits).forEach(sym => {
-    const el = document.getElementById('limit-' + sym.replace('/','_'));
-    if (el) limits[sym] = parseFloat(el.value) || 200;
-  });
-  const data = await fetch('/api/crypto/coin-limits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limits})}).then(r=>r.json());
-  if (data.saved) { toast('Coin limits saved'); _cbLimits = limits; loadCbReadiness(); }
-  else toast('Save failed', false);
-}
-
-async function loadCbReadiness() {
-  try {
-    const data = await fetch('/api/coinbase/readiness').then(r=>r.json());
-    _cbReadiness = data.symbols || {};
-    const grid = document.getElementById('readiness-grid');
-    if (!grid) return;
-    const entries = Object.entries(_cbReadiness);
-    if (!entries.length) {
-      grid.innerHTML = '<div style="color:var(--muted);font-size:10px;">No symbols configured.</div>';
-      return;
-    }
-    grid.innerHTML = entries.map(([sym, info]) => {
-      const dotCls = info.status === 'ready' ? 'ready' : info.status === 'warning' ? 'warn' : 'error';
-      const icon   = info.status === 'ready' ? '✓' : info.status === 'warning' ? '⚠' : '✗';
-      return `<div class="readiness-item" title="${escHtml(info.reason||'')}">
-        <div class="readiness-dot ${dotCls}"></div>
-        <div>
-          <div style="font-weight:700;color:var(--purple3);">${escHtml(sym)}</div>
-          <div style="font-size:9px;color:var(--muted);">${icon} ${escHtml((info.reason||'').slice(0,50))}</div>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) { console.warn('CB readiness error', e); }
-}
-
-function updateCbSidebar() {
-  const el = document.getElementById('cb-sidebar-content');
-  if (!el) return;
-  if (!_cbHoldings.length) {
-    el.innerHTML = '<div style="color:var(--muted);font-size:10px;text-align:center;padding:8px;">Not connected or no holdings</div>';
-    return;
-  }
-  let html = '';
-  _cbHoldings.slice(0, 6).forEach(b => {
-    const val = b.usd_value != null ? fmt$(b.usd_value) : '';
-    html += `<div class="cb-balance-row">
-      <span class="cb-balance-currency">${escHtml(b.currency)}</span>
-      <div style="text-align:right;">
-        <div class="cb-balance-amount">${Number(b.balance).toLocaleString(undefined,{maximumSignificantDigits:5})}</div>
-        ${val ? `<div class="cb-balance-usd">${val}</div>` : ''}
-      </div>
-    </div>`;
-  });
-  el.innerHTML = html;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // HOLDINGS
 // ════════════════════════════════════════════════════════════════════════════
-async function loadPositions() {
+async function loadHoldings() {
   try {
     const data  = await fetch('/api/positions').then(r=>r.json());
     const badge = document.getElementById('holdings-count-badge');
@@ -1478,7 +1113,7 @@ async function liquidatePosition(sym) {
   const data = await fetch('/api/positions/liquidate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})}).then(r=>r.json());
   if (data.error) { toast('Error: ' + data.error, false); return; }
   toast(`${sym} liquidated (${data.status})`);
-  loadPositions(); refreshData();
+  loadHoldings(); refreshData();
 }
 
 async function liquidateAll() {
@@ -1488,7 +1123,7 @@ async function liquidateAll() {
   const data = await fetch('/api/positions/liquidate-all',{method:'POST'}).then(r=>r.json());
   if (data.error) { toast('Error: ' + data.error, false); return; }
   toast(`All ${data.closed||cnt} positions liquidated`);
-  loadPositions(); refreshData();
+  loadHoldings(); refreshData();
 }
 
 async function aiReviewPositions() {
@@ -1567,6 +1202,22 @@ function appendMsg(role, text, streaming=false) {
   return span;
 }
 
+
+async function streamChat(res, onChunk) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    for (const line of decoder.decode(value).split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      const d = line.slice(6);
+      if (d === '[DONE]') return;
+      try { onChunk(JSON.parse(d)); } catch(e) {}
+    }
+  }
+}
+
 async function sendChat() {
   const input = document.getElementById('chat-input');
   const btn   = document.getElementById('chat-send');
@@ -1620,7 +1271,7 @@ function kbSetTab(tab) {
   document.getElementById('tab-' + (tab === 'url' ? 'url' : 'text')).classList.add('active');
 }
 
-async function loadKB() {
+async function kbLoad() {
   try {
     const items = await fetch('/api/knowledge').then(r=>r.json());
     document.getElementById('kb-count-badge').textContent = items.length + ' items';
@@ -1657,7 +1308,7 @@ async function kbSave(mode) {
     if (d.id) {
       toast('Saved to knowledge base ✓');
       ['kb-url-input','kb-url-tags','kb-url-title','kb-text-content','kb-text-title','kb-text-tags'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-      loadKB();
+      kbLoad();
     } else { toast(d.error || 'Save failed', false); }
   } catch(e) { toast('Save error: ' + e, false); }
   finally { btn.disabled = false; btn.textContent = mode==='url'?'⬇ Save':mode==='html'?'🧹 Strip HTML':'💾 Save'; }
@@ -1666,7 +1317,28 @@ async function kbSave(mode) {
 async function kbDelete(id) {
   if (!confirm('Delete this knowledge item?')) return;
   const d = await fetch(`/api/knowledge/${id}`,{method:'DELETE'}).then(r=>r.json());
-  if (d.status === 'deleted') { document.getElementById('kb-item-'+id)?.remove(); toast('Deleted'); loadKB(); }
+  if (d.status === 'deleted') { document.getElementById('kb-item-'+id)?.remove(); toast('Deleted'); kbLoad(); }
+}
+
+
+async function loadTrades() {
+  try {
+    const trades = await fetch('/api/trades').then(r=>r.json());
+    const tbody = document.getElementById('trades-body-inner');
+    if (!tbody) return;
+    if (trades.length) {
+      tbody.innerHTML = trades.map(t => `
+        <tr>
+          <td>${t.ts}</td><td><strong>${t.symbol}</strong></td>
+          <td class="td-${t.side}">${t.side.toUpperCase()}</td>
+          <td>${t.qty}</td><td>$${t.price}</td><td>$${t.value}</td>
+          <td class="td-${t.mode}">${t.mode}</td>
+          <td class="td-${t.status}">${t.status}</td>
+        </tr>`).join('');
+    } else {
+      tbody.innerHTML = '<tr><td colspan="8" class="no-data">No trades yet.</td></tr>';
+    }
+  } catch(e) { console.warn('Trades error', e); }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1741,28 +1413,28 @@ async function refreshData() {
     }
     document.getElementById('footer-ts').textContent = 'Last updated: ' + new Date().toLocaleTimeString() + ' · Auto-refresh every 30s';
   } catch(e) { console.warn('Refresh error', e); }
-  loadPositions();
+  loadHoldings();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-  loadMarketData();
-  loadCoinbaseData();
+  loadStats();
   loadDbStats();
   loadResources();
-  loadKB();
-  loadPositions();
+  loadTrades();
+  loadHoldings();
   loadDigestStatus();
+  kbLoad();
 
-  setInterval(refreshData,      30000);
-  setInterval(loadCoinbaseData, 30000);
-  setInterval(loadMarketData,   300000);
-  setInterval(loadDbStats,      120000);
-  setInterval(loadResources,     60000);
-  setInterval(loadDigestStatus,  60000);
-  setInterval(loadKB,           120000);
+  setInterval(loadStats,        30000);
+  setInterval(loadDbStats,      30000);
+  setInterval(loadResources,    30000);
+  setInterval(loadTrades,       30000);
+  setInterval(loadHoldings,     30000);
+  setInterval(loadDigestStatus, 30000);
+  setInterval(kbLoad,          120000);
 });
 </script>
 </body>
