@@ -698,6 +698,81 @@ def coin_limits():
     return jsonify({"saved": True, "limits": limits})
 
 
+@app.route("/api/crypto/engine-status")
+@login_required
+def crypto_engine_status():
+    """Aggregated crypto trading engine snapshot for the dashboard header stats."""
+    from trade.coinbase_client import is_configured, get_crypto_balance
+
+    stats     = daily_stats()
+    ingest_st = get_ingest_status()
+    positions = get_all_positions()
+    open_ct   = sum(1 for p in positions if "/" in p.get("symbol", ""))
+
+    # Last crypto buy / sell
+    trades   = recent_trades(30)
+    c_trades = [t for t in trades if "/" in t.get("symbol", "")]
+    last_buy  = next((t for t in c_trades if t["side"] == "buy"),  None)
+    last_sell = next((t for t in c_trades if t["side"] == "sell"), None)
+
+    # Top signal today (highest confidence crypto)
+    top_signal = None
+    db = Session()
+    try:
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        sig = (db.query(Signal)
+                 .filter(Signal.ts >= today_start, Signal.symbol.contains("/"))
+                 .order_by(Signal.confidence.desc())
+                 .first())
+        if sig:
+            top_signal = {
+                "symbol":     sig.symbol,
+                "action":     sig.action,
+                "confidence": round(float(sig.confidence or 0), 2),
+            }
+    except Exception:
+        pass
+    finally:
+        db.close()
+
+    # USD balance from Coinbase
+    usd_balance, cb_error = 0.0, None
+    if is_configured():
+        try:
+            usd_balance = get_crypto_balance("USD")
+        except Exception as e:
+            cb_error = str(e)[:100]
+
+    mode = get_trade_mode()
+    on   = get_crypto_enabled()
+    if on and mode == "live":
+        engine_label, engine_cls = "LIVE", "positive"
+    elif on:
+        engine_label, engine_cls = "SUGGEST", "accent"
+    else:
+        engine_label, engine_cls = "OFF", "negative"
+
+    return jsonify({
+        "engine_on":       on,
+        "engine_label":    engine_label,
+        "engine_cls":      engine_cls,
+        "trade_mode":      mode,
+        "ingest_running":  ingest_st.get("running", False),
+        "pnl":             stats["pnl"],
+        "pnl_class":       stats["pnl_class"],
+        "buys":            stats["buys"],
+        "sells":           stats["sells"],
+        "signals_today":   stats["signals_today"],
+        "usd_balance":     round(usd_balance, 2),
+        "cb_error":        cb_error,
+        "open_positions":  open_ct,
+        "top_signal":      top_signal,
+        "last_buy":        last_buy,
+        "last_sell":       last_sell,
+        "approved_capital": get_approved_capital(),
+    })
+
+
 @app.route("/api/settings", methods=["POST"])
 @login_required
 def update_settings():

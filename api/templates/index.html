@@ -600,22 +600,24 @@
       </div>
     </div>
 
-    <!-- Stats Row -->
+    <!-- Engine Stats Row -->
     <div class="stats-row">
+      <div class="stat-card hl">
+        <div class="lbl">Engine</div>
+        <div class="val" id="stat-engine">{{ 'LIVE' if stats.trade_mode == 'live' and crypto_enabled else ('SUGGEST' if crypto_enabled else 'OFF') }}</div>
+      </div>
       <div class="stat-card hl">
         <div class="lbl">Daily P&amp;L</div>
         <div class="val {{ stats.pnl_class }}" id="stat-pnl">${{ stats.pnl }}</div>
         <button class="stat-reset" title="Clear" onclick="resetStat('trades_today')">⊘</button>
       </div>
       <div class="stat-card">
-        <div class="lbl">Signals Today</div>
-        <div class="val accent" id="stat-signals">{{ stats.signals_today }}</div>
-        <button class="stat-reset" title="Clear" onclick="resetStat('signals_today')">⊘</button>
+        <div class="lbl">USD Available</div>
+        <div class="val accent" id="stat-usd" style="font-size:18px;">…</div>
       </div>
       <div class="stat-card">
-        <div class="lbl">Trades Today</div>
-        <div class="val" id="stat-trades">{{ stats.trades_today }}</div>
-        <button class="stat-reset" title="Clear" onclick="resetStat('trades_today')">⊘</button>
+        <div class="lbl">Open Positions</div>
+        <div class="val" id="stat-open-pos" style="font-size:22px;">…</div>
       </div>
       <div class="stat-card">
         <div class="lbl">Buys</div>
@@ -627,35 +629,30 @@
         <div class="val negative" id="stat-sells">{{ stats.sells }}</div>
         <button class="stat-reset" title="Clear" onclick="resetStat('sells_today')">⊘</button>
       </div>
-      <div class="stat-card hl">
-        <div class="lbl">Approved Capital</div>
-        <div class="val accent" id="stat-capital" style="font-size:18px;">${{ approved_capital|int }}</div>
-      </div>
     </div>
 
-    <!-- DB Ingestion Stats -->
+    <!-- Intelligence Row -->
     <div class="db-stats-row" id="db-stats-row">
-      <div class="stat-card">
-        <div class="lbl">Total Bars</div>
-        <div class="val accent" id="stat-bar-count" style="font-size:18px;">…</div>
+      <div class="stat-card" style="min-width:150px">
+        <div class="lbl">Top Mover</div>
+        <div class="val accent" id="stat-top-signal" style="font-size:13px;">…</div>
+      </div>
+      <div class="stat-card" style="min-width:140px">
+        <div class="lbl">Last Buy</div>
+        <div class="val positive" id="stat-last-buy" style="font-size:13px;">…</div>
+      </div>
+      <div class="stat-card" style="min-width:140px">
+        <div class="lbl">Last Sell</div>
+        <div class="val negative" id="stat-last-sell" style="font-size:13px;">…</div>
       </div>
       <div class="stat-card">
-        <div class="lbl">DB Size</div>
-        <div class="val" id="stat-db-size" style="font-size:16px;">…</div>
-      </div>
-      <div class="stat-card">
-        <div class="lbl">Last Ingested</div>
-        <div class="val" id="stat-last-bar" style="font-size:13px;">…</div>
+        <div class="lbl">Coinbase</div>
+        <div class="val" id="stat-cb-status" style="font-size:13px;">…</div>
       </div>
       <div class="stat-card">
         <div class="lbl">All Signals</div>
         <div class="val" id="stat-sig-count" style="font-size:18px;">…</div>
         <button class="stat-reset" title="Delete ALL signals" onclick="resetStat('signals_all')">⊘</button>
-      </div>
-      <div class="stat-card">
-        <div class="lbl">All Trades</div>
-        <div class="val" id="stat-trade-count" style="font-size:18px;">…</div>
-        <button class="stat-reset" title="Delete ALL trades" onclick="resetStat('trades_all')">⊘</button>
       </div>
       <div class="stat-card">
         <div class="lbl">News Digest</div>
@@ -1145,12 +1142,63 @@ async function runDigestNow() {
 async function loadDbStats() {
   try {
     const data = await fetch('/api/db/stats').then(r=>r.json());
-    document.getElementById('stat-bar-count').textContent   = (data.bar_count  || 0).toLocaleString();
-    document.getElementById('stat-db-size').textContent     = data.db_size  || '—';
-    document.getElementById('stat-last-bar').textContent    = data.latest_bar || '—';
-    document.getElementById('stat-sig-count').textContent   = (data.signal_count || 0).toLocaleString();
-    document.getElementById('stat-trade-count').textContent = (data.trade_count  || 0).toLocaleString();
+    const el = document.getElementById('stat-sig-count');
+    if (el) el.textContent = (data.signal_count || 0).toLocaleString();
   } catch(e) { console.warn('DB stats error', e); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ENGINE STATS (crypto trading engine snapshot)
+// ════════════════════════════════════════════════════════════════════════════
+async function loadEngineStats() {
+  try {
+    const s = await fetch('/api/crypto/engine-status').then(r=>r.json());
+
+    // Row 1
+    const eng = document.getElementById('stat-engine');
+    if (eng) { eng.textContent = s.engine_label; eng.className = 'val ' + s.engine_cls; }
+    const pnl = document.getElementById('stat-pnl');
+    if (pnl) { pnl.textContent = '$' + s.pnl; pnl.className = 'val ' + s.pnl_class; }
+    const usd = document.getElementById('stat-usd');
+    if (usd) usd.textContent = s.cb_error ? 'ERR' : '$' + (s.usd_balance||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const pos = document.getElementById('stat-open-pos');
+    if (pos) pos.textContent = s.open_positions ?? '—';
+    const buys = document.getElementById('stat-buys');
+    if (buys) buys.textContent = s.buys ?? 0;
+    const sells = document.getElementById('stat-sells');
+    if (sells) sells.textContent = s.sells ?? 0;
+
+    // Row 2 — intelligence
+    const topSig = document.getElementById('stat-top-signal');
+    if (topSig) {
+      if (s.top_signal) {
+        topSig.textContent = `${s.top_signal.symbol} ${s.top_signal.action?.toUpperCase()} (${Math.round((s.top_signal.confidence||0)*100)}%)`;
+        topSig.className = 'val accent';
+      } else { topSig.textContent = '—'; topSig.className = 'val'; }
+    }
+    const lb = document.getElementById('stat-last-buy');
+    if (lb) lb.textContent = s.last_buy ? `${s.last_buy.symbol} @ $${s.last_buy.price}` : '—';
+    const ls = document.getElementById('stat-last-sell');
+    if (ls) ls.textContent = s.last_sell ? `${s.last_sell.symbol} @ $${s.last_sell.price}` : '—';
+    const cb = document.getElementById('stat-cb-status');
+    if (cb) {
+      if (s.cb_error) { cb.textContent = '⚠ ' + s.cb_error.substring(0,40); cb.className = 'val negative'; }
+      else { cb.textContent = s.usd_balance > 0 ? '✓ Connected' : '✓ $0 USD'; cb.className = 'val positive'; }
+    }
+
+    // Sync ingest/toggle buttons if present
+    if (s.ingest_running !== undefined && s.ingest_running !== null) {
+      const on = s.ingest_running;
+      const it = document.getElementById('ingest-toggle');
+      if (it) { it.className = 'toggle-btn '+(on?'on':'off'); it.textContent = on?'▶ FEED':'■ FEED'; }
+      const bi = document.getElementById('badge-ingest');
+      if (bi) { bi.className = 'badge '+(on?'green':'red'); bi.textContent = on?'Ingest ▶':'Ingest ■'; }
+    }
+    if (s.crypto_enabled !== undefined) {
+      const btn = document.getElementById('crypto-toggle');
+      if (btn) { btn.className = 'toggle-btn '+(s.crypto_enabled?'on crypto':'off'); btn.textContent = s.crypto_enabled?'₿ CRYPTO ON':'○ CRYPTO OFF'; }
+    }
+  } catch(e) { console.warn('Engine stats error', e); }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1673,63 +1721,15 @@ async function kbDelete(id) {
 // AUTO-REFRESH
 // ════════════════════════════════════════════════════════════════════════════
 async function loadStats() {
-  try {
-    const stats = await fetch('/api/stats').then(r=>r.json());
-    document.getElementById('stat-pnl').textContent    = '$' + stats.pnl;
-    document.getElementById('stat-pnl').className      = 'val ' + stats.pnl_class;
-    document.getElementById('stat-signals').textContent = stats.signals_today;
-    document.getElementById('stat-trades').textContent  = stats.trades_today;
-    document.getElementById('stat-buys').textContent    = stats.buys;
-    document.getElementById('stat-sells').textContent   = stats.sells;
-    if (stats.stocks_enabled !== undefined) {
-      const btn = document.getElementById('stocks-toggle');
-      if (btn) { btn.className = 'toggle-btn '+(stats.stocks_enabled?'on':'off'); btn.textContent = stats.stocks_enabled?'📈 STOCKS ON':'○ STOCKS OFF'; }
-    }
-    if (stats.crypto_enabled !== undefined) {
-      const btn = document.getElementById('crypto-toggle');
-      if (btn) { btn.className = 'toggle-btn '+(stats.crypto_enabled?'on crypto':'off'); btn.textContent = stats.crypto_enabled?'₿ CRYPTO ON':'○ CRYPTO OFF'; }
-    }
-    if (stats.ingest_running !== undefined && stats.ingest_running !== null) {
-      const on = stats.ingest_running;
-      document.getElementById('ingest-toggle').className   = 'toggle-btn '+(on?'on':'off');
-      document.getElementById('ingest-toggle').textContent = on?'▶ FEED':'■ FEED';
-      document.getElementById('badge-ingest').className    = 'badge '+(on?'green':'red');
-      document.getElementById('badge-ingest').textContent  = on?'Ingest ▶':'Ingest ■';
-    }
-  } catch(e) { console.warn('Stats error', e); }
+  await loadEngineStats();
 }
 
 async function refreshData() {
   try {
-    const [statsRes, tradesRes] = await Promise.all([fetch('/api/stats'), fetch('/api/trades')]);
-    const stats  = await statsRes.json();
+    const [tradesRes] = await Promise.all([fetch('/api/trades')]);
     const trades = await tradesRes.json();
-
-    document.getElementById('stat-pnl').textContent    = '$' + stats.pnl;
-    document.getElementById('stat-pnl').className      = 'val ' + stats.pnl_class;
-    document.getElementById('stat-signals').textContent = stats.signals_today;
-    document.getElementById('stat-trades').textContent  = stats.trades_today;
-    document.getElementById('stat-buys').textContent    = stats.buys;
-    document.getElementById('stat-sells').textContent   = stats.sells;
-
-    if (stats.stocks_enabled !== undefined) {
-      const btn = document.getElementById('stocks-toggle');
-      if (btn) { btn.className = 'toggle-btn '+(stats.stocks_enabled?'on':'off'); btn.textContent = stats.stocks_enabled?'📈 STOCKS ON':'○ STOCKS OFF'; }
-    }
-    if (stats.crypto_enabled !== undefined) {
-      const btn = document.getElementById('crypto-toggle');
-      if (btn) { btn.className = 'toggle-btn '+(stats.crypto_enabled?'on crypto':'off'); btn.textContent = stats.crypto_enabled?'₿ CRYPTO ON':'○ CRYPTO OFF'; }
-    }
-    if (stats.ingest_running !== undefined && stats.ingest_running !== null) {
-      const on = stats.ingest_running;
-      document.getElementById('ingest-toggle').className   = 'toggle-btn '+(on?'on':'off');
-      document.getElementById('ingest-toggle').textContent = on?'▶ FEED':'■ FEED';
-      document.getElementById('badge-ingest').className    = 'badge '+(on?'green':'red');
-      document.getElementById('badge-ingest').textContent  = on?'Ingest ▶':'Ingest ■';
-    }
-
     const tbody = document.getElementById('trades-body-inner');
-    if (trades.length) {
+    if (tbody && trades.length) {
       tbody.innerHTML = trades.map(t => `
         <tr>
           <td>${t.ts}</td><td><strong>${t.symbol}</strong></td>
@@ -1739,8 +1739,10 @@ async function refreshData() {
           <td class="td-${t.status}">${t.status}</td>
         </tr>`).join('');
     }
-    document.getElementById('footer-ts').textContent = 'Last updated: ' + new Date().toLocaleTimeString() + ' · Auto-refresh every 30s';
+    const ft = document.getElementById('footer-ts');
+    if (ft) ft.textContent = 'Last updated: ' + new Date().toLocaleTimeString() + ' · Auto-refresh every 30s';
   } catch(e) { console.warn('Refresh error', e); }
+  loadEngineStats();
   loadPositions();
 }
 
@@ -1750,19 +1752,21 @@ async function refreshData() {
 document.addEventListener('DOMContentLoaded', () => {
   loadMarketData();
   loadCoinbaseData();
+  loadEngineStats();
   loadDbStats();
   loadResources();
   loadKB();
   loadPositions();
   loadDigestStatus();
 
-  setInterval(refreshData,      30000);
-  setInterval(loadCoinbaseData, 30000);
-  setInterval(loadMarketData,   300000);
-  setInterval(loadDbStats,      120000);
-  setInterval(loadResources,     60000);
-  setInterval(loadDigestStatus,  60000);
-  setInterval(loadKB,           120000);
+  setInterval(refreshData,        30000);
+  setInterval(loadEngineStats,    30000);
+  setInterval(loadCoinbaseData,   30000);
+  setInterval(loadMarketData,    300000);
+  setInterval(loadDbStats,       120000);
+  setInterval(loadResources,      60000);
+  setInterval(loadDigestStatus,   60000);
+  setInterval(loadKB,            120000);
 });
 </script>
 </body>

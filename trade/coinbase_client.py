@@ -8,13 +8,32 @@ Required environment variables:
     COINBASE_API_KEY_NAME    — organizations/<org>/apiKeys/<key-id>
     COINBASE_API_PRIVATE_KEY — EC private key PEM; use \\n for newlines in .env files
 """
-import os, time, secrets
+import os, time, secrets, re as _re
 import requests
 import jwt  # PyJWT with cryptography backend (PyJWT[crypto])
 
-CB_KEY_NAME    = os.getenv("COINBASE_API_KEY_NAME", "")
-# .env stores the PEM with literal \n — restore real newlines at load time
-CB_PRIVATE_KEY = os.getenv("COINBASE_API_PRIVATE_KEY", "").replace("\\n", "\n")
+CB_KEY_NAME = os.getenv("COINBASE_API_KEY_NAME", "")
+
+
+def _sanitize_pem(raw: str) -> str:
+    """Normalize a PEM private key string.
+
+    Handles common corruption from env-var copy-paste:
+    - Restores real newlines from literal '\\n' sequences
+    - Strips carriage returns (Windows CRLF)
+    - Removes non-base64 bytes from key body lines (invalid byte error fix)
+    """
+    pem = raw.replace("\\n", "\n").replace("\r", "")
+    lines = []
+    for line in pem.splitlines():
+        if line.startswith("-----"):
+            lines.append(line)
+        else:
+            lines.append(_re.sub(r"[^A-Za-z0-9+/=]", "", line))
+    return "\n".join(lines)
+
+
+CB_PRIVATE_KEY = _sanitize_pem(os.getenv("COINBASE_API_PRIVATE_KEY", ""))
 CB_BASE        = "https://api.coinbase.com"
 
 
