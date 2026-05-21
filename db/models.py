@@ -150,6 +150,10 @@ def init_db():
         "symbols":                 os.getenv("SYMBOLS", "TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX"),
         "options_enabled":         "false",
         "max_option_premium_usd":  "200",
+        "stocks_enabled":          "true",
+        "crypto_enabled":          "true",
+        "crypto_symbols":          os.getenv("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD"),
+        "wallet_enabled":          "true",
     }
     for k, v in defaults.items():
         if not session.query(Setting).filter(Setting.key == k).first():

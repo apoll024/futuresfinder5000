@@ -62,6 +62,9 @@ def close_all_positions(reason: str = "EOD"):
             print(f"  [executor] {reason}: no open positions to close")
             return
         for pos in positions:
+            if is_crypto(pos.symbol) and reason.startswith("EOD"):
+                print(f"  [executor] {reason}: skipping crypto {pos.symbol} (24/7 asset)")
+                continue
             client.close_position(pos.symbol)
             print(f"  [executor] {reason}: closed {pos.symbol} ({pos.qty} shares)")
     except Exception as e:
@@ -73,6 +76,33 @@ def eod_check():
     now = datetime.now(ET).time()
     if now >= EOD_CLOSE_TIME:
         close_all_positions("EOD-15:45")
+
+
+# ── Crypto helpers ─────────────────────────────────────────────────────────────
+
+CRYPTO_BASES = {"BTC", "ETH", "SOL", "AVAX", "MATIC", "DOT", "ADA", "LINK",
+                "UNI", "DOGE", "SHIB", "LTC", "XRP", "ATOM", "NEAR", "APT"}
+
+
+def is_crypto(symbol: str) -> bool:
+    """True for crypto symbols in both BTC/USD (stream) and BTCUSD (position) formats."""
+    if "/" in symbol:
+        return True
+    upper = symbol.upper()
+    return any(upper.startswith(base) for base in CRYPTO_BASES)
+
+
+def _get_crypto_position_qty(symbol: str) -> float:
+    """Return available quantity for a crypto asset (Coinbase primary, Alpaca fallback)."""
+    from trade.coinbase_client import is_configured as cb_ok, get_crypto_balance
+    if cb_ok():
+        return get_crypto_balance(symbol.split("/")[0])
+    alpaca_sym = symbol.replace("/", "")
+    try:
+        pos = get_client().get_open_position(alpaca_sym)
+        return float(pos.qty)
+    except Exception:
+        return 0.0
 
 
 # ── Options trading ────────────────────────────────────────────────────────────
@@ -289,6 +319,113 @@ def execute_signal(signal_id: int):
     except Exception as e:
         trade.status = "rejected"
         print(f"  [executor] Order rejected: {e}")
+
+    session.add(trade)
+    sig.acted_on = True
+    session.commit()
+    session.close()
+
+
+def execute_crypto_signal(signal_id: int):
+    """
+    Execute a crypto signal via Coinbase Advanced Trade (primary) or Alpaca (fallback).
+    Buys use USD notional; sells use the full available base-currency balance.
+    """
+    session = Session()
+    sig = session.query(Signal).filter(Signal.id == signal_id).first()
+    if not sig or sig.action == "hold":
+        session.close()
+        return
+
+    mode = TRADE_MODE
+    print(f"  [executor] Crypto Mode={mode}  {sig.symbol} {sig.action.upper()}  conf={sig.confidence:.2f}")
+
+    if sig.confidence < MIN_CONFIDENCE:
+        print(f"  [executor] Below confidence threshold ({sig.confidence:.2f} < {MIN_CONFIDENCE}) — skip")
+        session.close()
+        return
+
+    indicators = json.loads(sig.indicators or "{}")
+    price      = indicators.get("close", 1.0)
+
+    trade = Trade(
+        symbol=sig.symbol, side=sig.action, qty=0, price=price,
+        mode=mode, signal_id=sig.id, status="suggested",
+    )
+
+    if mode == "suggest":
+        session.add(trade)
+        sig.acted_on = True
+        session.commit()
+        session.close()
+        print(f"  [executor] Crypto suggestion: {sig.action.upper()} {sig.symbol} @ ~${price:.2f}")
+        return
+
+    # Safety: daily loss halt
+    pnl = daily_pnl()
+    if pnl <= -MAX_DAILY_LOSS:
+        print(f"  [executor] HALT — daily loss limit hit (${pnl:.2f}). Closing all positions.")
+        close_all_positions("LOSS-HALT")
+        session.close()
+        return
+
+    from trade.coinbase_client import (
+        is_configured as cb_ok, coinbase_symbol,
+        place_market_buy, place_market_sell, get_crypto_balance,
+    )
+
+    try:
+        if cb_ok():
+            # ── Coinbase execution ──────────────────────────────────────────
+            cb_sym = coinbase_symbol(sig.symbol)
+            if sig.action == "buy":
+                resp     = place_market_buy(cb_sym, MAX_POSITION_USD)
+                trade.qty = round(MAX_POSITION_USD / price, 6) if price > 0 else 0
+            else:
+                base = sig.symbol.split("/")[0]
+                qty  = get_crypto_balance(base)
+                if qty <= 0:
+                    print(f"  [executor] No Coinbase balance for {base} — sell skipped")
+                    session.close()
+                    return
+                resp      = place_market_sell(cb_sym, qty)
+                trade.qty = qty
+            # Coinbase wraps the order ID under success_response in some SDK versions
+            order_id       = (resp.get("order_id")
+                              or resp.get("success_response", {}).get("order_id", "?"))
+            trade.alpaca_id = str(order_id)[:50]
+            trade.status    = "submitted"
+            print(f"  [executor] Coinbase {sig.action.upper()} {cb_sym} → {order_id}")
+        else:
+            # ── Alpaca fallback ─────────────────────────────────────────────
+            client = get_client()
+            if sig.action == "buy":
+                order = client.submit_order(MarketOrderRequest(
+                    symbol=sig.symbol,
+                    notional=MAX_POSITION_USD,
+                    side=OrderSide.BUY,
+                    time_in_force=TimeInForce.IOC,
+                ))
+                trade.qty = round(MAX_POSITION_USD / price, 6) if price > 0 else 0
+            else:
+                qty = _get_crypto_position_qty(sig.symbol)
+                if qty <= 0:
+                    print(f"  [executor] No open position for {sig.symbol} — sell skipped")
+                    session.close()
+                    return
+                order = client.submit_order(MarketOrderRequest(
+                    symbol=sig.symbol,
+                    qty=qty,
+                    side=OrderSide.SELL,
+                    time_in_force=TimeInForce.IOC,
+                ))
+                trade.qty = qty
+            trade.alpaca_id = str(order.id)
+            trade.status    = "submitted"
+            print(f"  [executor] Alpaca crypto {sig.action.upper()} {sig.symbol} → {order.id}")
+    except Exception as e:
+        trade.status = "rejected"
+        print(f"  [executor] Crypto order rejected: {e}")
 
     session.add(trade)
     sig.acted_on = True

@@ -106,6 +106,10 @@ services:
       - MAX_DAILY_LOSS_USD=${MAX_DAILY_LOSS_USD:-200}
       - MAX_OPEN_POSITIONS=${MAX_OPEN_POSITIONS:-5}
       - FLASK_SECRET=${FLASK_SECRET:-ff5k-change-me-in-prod-32bytes!!}
+      - WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY:-}
+      - WALLET_NETWORK=${WALLET_NETWORK:-mainnet}
+      - COINBASE_API_KEY_NAME=${COINBASE_API_KEY_NAME:-}
+      - COINBASE_API_PRIVATE_KEY=${COINBASE_API_PRIVATE_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 768m
@@ -120,6 +124,30 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  crypto:
+    build: .
+    container_name: ff_crypto
+    command: python ingest/crypto_realtime.py
+    environment:
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER=${ALPACA_PAPER:-true}
+      - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+      - LLM_API_URL=http://ollama:11434/v1/chat/completions
+      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b}
+      - CRYPTO_SYMBOLS=${CRYPTO_SYMBOLS:-BTC/USD,ETH/USD,SOL/USD}
+      - WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY:-}
+      - WALLET_NETWORK=${WALLET_NETWORK:-mainnet}
+      - COINBASE_API_KEY_NAME=${COINBASE_API_KEY_NAME:-}
+      - COINBASE_API_PRIVATE_KEY=${COINBASE_API_PRIVATE_KEY:-}
+    mem_limit: 512m
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

@@ -131,7 +131,20 @@ def get_max_option_premium() -> float:
     return float(get_setting("max_option_premium_usd", "200"))
 
 
-def get_all_positions() -> list[dict]:
+def get_stocks_enabled() -> bool:
+    return get_setting("stocks_enabled", "true") == "true"
+
+
+def get_crypto_enabled() -> bool:
+    return get_setting("crypto_enabled", "true") == "true"
+
+
+def get_crypto_symbols() -> list[str]:
+    raw = get_setting("crypto_symbols", "BTC/USD,ETH/USD,SOL/USD")
+    return [s.strip().upper() for s in raw.split(",") if s.strip()]
+
+
+def get_all_positions()-> list[dict]:
     """Open positions: Alpaca in paper/live mode; derived from today's trade log in suggest mode."""
     mode = get_trade_mode()
     if mode != "suggest":
@@ -380,6 +393,9 @@ def index():
         daily_loss_limit    = get_daily_loss_limit(),
         options_enabled     = get_options_enabled(),
         max_option_premium  = get_max_option_premium(),
+        stocks_enabled      = get_stocks_enabled(),
+        crypto_enabled      = get_crypto_enabled(),
+        crypto_symbols      = get_crypto_symbols(),
         ollama_ok           = ollama_healthy(),
         now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
         market_open         = "09:45" <= now.strftime("%H:%M") <= "15:45",
@@ -446,6 +462,120 @@ def remove_symbol():
     return jsonify({"symbols": symbols})
 
 
+@app.route("/api/stocks/toggle", methods=["POST"])
+@login_required
+def toggle_stocks():
+    new = "false" if get_stocks_enabled() else "true"
+    set_setting("stocks_enabled", new)
+    return jsonify({"stocks_enabled": new == "true"})
+
+
+@app.route("/api/crypto/toggle", methods=["POST"])
+@login_required
+def toggle_crypto():
+    new = "false" if get_crypto_enabled() else "true"
+    set_setting("crypto_enabled", new)
+    return jsonify({"crypto_enabled": new == "true"})
+
+
+@app.route("/api/crypto/symbols/add", methods=["POST"])
+@login_required
+def add_crypto_symbol():
+    sym = (request.json or {}).get("symbol", "").strip().upper()
+    if not sym:
+        return jsonify({"error": "No symbol provided"}), 400
+    syms = get_crypto_symbols()
+    if sym not in syms:
+        syms.append(sym)
+        set_setting("crypto_symbols", ",".join(syms))
+    return jsonify({"crypto_symbols": syms})
+
+
+@app.route("/api/crypto/symbols/remove", methods=["POST"])
+@login_required
+def remove_crypto_symbol():
+    sym  = (request.json or {}).get("symbol", "").strip().upper()
+    syms = [s for s in get_crypto_symbols() if s != sym]
+    set_setting("crypto_symbols", ",".join(syms))
+    return jsonify({"crypto_symbols": syms})
+
+
+# ── Crypto market data (fear-greed, top coins, trending) ────────────────────
+_market_cache: dict = {"data": None, "ts": 0.0}
+_MARKET_CACHE_TTL = 300   # 5 min
+
+@app.route("/api/crypto/market")
+@login_required
+def crypto_market():
+    """Aggregated live market data for the sidebar panel."""
+    import time as _time
+    now = _time.time()
+    if _market_cache["data"] and now - _market_cache["ts"] < _MARKET_CACHE_TTL:
+        return jsonify({**_market_cache["data"], "cached": True})
+
+    CV_BASE = "https://cryptocurrency.cv"
+    fear_greed = {"value": 50, "label": "Neutral", "trend": None}
+    coins      = []
+    trending   = []
+
+    try:
+        r = requests.get(f"{CV_BASE}/api/market/fear-greed", timeout=8)
+        if r.ok:
+            d   = r.json()
+            cur = d.get("current", {})
+            tr  = d.get("trend", {})
+            fear_greed = {
+                "value": cur.get("value", 50),
+                "label": cur.get("valueClassification", "Neutral"),
+                "trend": tr,
+            }
+    except Exception as e:
+        print(f"[market] fear-greed error: {e}")
+
+    try:
+        r = requests.get(f"{CV_BASE}/api/market/coins?limit=15", timeout=10)
+        if r.ok:
+            coins = r.json().get("coins", [])[:15]
+    except Exception as e:
+        print(f"[market] coins error: {e}")
+
+    try:
+        r = requests.get(f"{CV_BASE}/api/trending", timeout=8)
+        if r.ok:
+            t = r.json().get("trending", [])
+            trending = [(x.get("keyword") or x.get("topic") or str(x)) for x in t[:8]]
+    except Exception as e:
+        print(f"[market] trending error: {e}")
+
+    data = {"fear_greed": fear_greed, "coins": coins, "trending": trending}
+    _market_cache["data"] = data
+    _market_cache["ts"]   = now
+    return jsonify({**data, "cached": False})
+
+
+# ── Wallet endpoints ─────────────────────────────────────────────────────────
+@app.route("/api/wallet/info")
+@login_required
+def wallet_info():
+    """Return wallet address, balances, and network."""
+    try:
+        from wallet.crypto_wallet import get_wallet_summary
+        return jsonify(get_wallet_summary())
+    except Exception as e:
+        return jsonify({"configured": False, "error": str(e)})
+
+
+@app.route("/api/wallet/refresh", methods=["POST"])
+@login_required
+def wallet_refresh():
+    """Force-refresh wallet balance cache."""
+    try:
+        from wallet.crypto_wallet import get_wallet_summary
+        return jsonify(get_wallet_summary(force=True))
+    except Exception as e:
+        return jsonify({"configured": False, "error": str(e)})
+
+
 @app.route("/api/settings", methods=["POST"])
 @login_required
 def update_settings():
@@ -462,10 +592,11 @@ def update_settings():
             except ValueError:
                 return jsonify({"error": f"Invalid value for {key}"}), 400
     # Boolean settings
-    if "options_enabled" in data:
-        val = "true" if str(data["options_enabled"]).lower() in ("true", "1", "yes") else "false"
-        set_setting("options_enabled", val)
-        updated["options_enabled"] = val
+    for key in ("options_enabled", "stocks_enabled", "crypto_enabled"):
+        if key in data:
+            val = "true" if str(data[key]).lower() in ("true", "1", "yes") else "false"
+            set_setting(key, val)
+            updated[key] = val
     return jsonify({"updated": updated})
 
 
@@ -498,6 +629,8 @@ def api_stats():
                     "approved_capital": get_approved_capital(),
                     "max_position":     get_max_position(),
                     "daily_loss_limit": get_daily_loss_limit(),
+                    "stocks_enabled":   get_stocks_enabled(),
+                    "crypto_enabled":   get_crypto_enabled(),
                     "ollama_ok":        ollama_healthy(),
                     "ingest_running":   ingest_st.get("running")})
 
@@ -883,6 +1016,8 @@ def build_chat_context() -> str:
         f"Max position: ${get_max_position():,.0f} | "
         f"Daily loss limit: ${get_daily_loss_limit():,.0f}\n"
         f"Options trading: {'ENABLED (max premium ${:.0f})'.format(get_max_option_premium()) if get_options_enabled() else 'DISABLED'} | "
+        f"Stocks: {'ENABLED' if get_stocks_enabled() else 'DISABLED'} | "
+        f"Crypto: {'ENABLED' if get_crypto_enabled() else 'DISABLED'}\n"
         f"News digest last run: {get_setting('news_digest_last_run', 'Never')}\n"
         f"Ingest: {'running' if ingest_st.get('running') else 'stopped'} | "
         f"Ollama: {'ok' if ollama_healthy() else 'OFFLINE'}\n"

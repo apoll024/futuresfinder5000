@@ -294,6 +294,8 @@ add_symbol: set to a ticker string ONLY if you identify a high-conviction opport
 
 
 def run_analysis(symbol: str):
+    if get_setting("stocks_enabled", "true") != "true":
+        return
     if not market_is_open(allow_entry=True):
         return
 
