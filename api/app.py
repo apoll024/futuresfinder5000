@@ -623,10 +623,58 @@ def stocks_page():
         options_enabled     = get_options_enabled(),
         max_option_premium  = get_max_option_premium(),
         stocks_enabled      = get_stocks_enabled(),
+        watchlist_only      = get_watchlist_only(),
         ollama_ok           = ollama_healthy(),
         now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
         market_open         = "09:45" <= now.strftime("%H:%M") <= "15:45",
     )
+
+
+@app.route("/api/alpaca/account")
+@login_required
+def api_alpaca_account():
+    """Return Alpaca account balances and all open positions."""
+    import os as _os
+    from alpaca.trading.client import TradingClient
+    api_key = _os.getenv("ALPACA_API_KEY")
+    secret  = _os.getenv("ALPACA_SECRET_KEY")
+    paper   = _os.getenv("ALPACA_PAPER", "true").lower() == "true"
+    if not api_key or not secret:
+        return jsonify({"configured": False, "error": "Alpaca keys not set"})
+    try:
+        client    = TradingClient(api_key, secret, paper=paper)
+        acct      = client.get_account()
+        positions = client.get_all_positions()
+        pos_list  = []
+        total_mv  = 0.0
+        total_pnl = 0.0
+        for p in positions:
+            mv  = float(p.market_value  or 0)
+            pnl = float(p.unrealized_pl or 0)
+            total_mv  += mv
+            total_pnl += pnl
+            pos_list.append({
+                "symbol":         p.symbol,
+                "qty":            float(p.qty),
+                "avg_entry":      round(float(p.avg_entry_price or 0), 2),
+                "current_price":  round(float(p.current_price   or 0), 2),
+                "market_value":   round(mv,  2),
+                "unrealized_pnl": round(pnl, 2),
+                "pct_change":     round(float(p.unrealized_plpc or 0) * 100, 2),
+            })
+        return jsonify({
+            "configured":      True,
+            "paper":           paper,
+            "cash":            round(float(acct.cash            or 0), 2),
+            "buying_power":    round(float(acct.buying_power    or 0), 2),
+            "portfolio_value": round(float(acct.portfolio_value or 0), 2),
+            "equity":          round(float(acct.equity          or 0), 2),
+            "total_mv":        round(total_mv,  2),
+            "total_pnl":       round(total_pnl, 2),
+            "positions":       pos_list,
+        })
+    except Exception as e:
+        return jsonify({"configured": False, "error": str(e)[:160]})
 
 
 @app.route("/api/coinbase/holdings")

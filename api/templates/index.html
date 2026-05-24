@@ -547,21 +547,18 @@
 
   <div class="hdr-right">
     <button class="toggle-btn {{ 'on crypto' if crypto_enabled else 'off' }}" id="crypto-toggle" onclick="toggleCrypto()">
-      {{ '₿ Crypto Trading' if crypto_enabled else '₿ Crypto Trading' }}
+      ₿ Crypto Trading
       <span class="tog-state">{{ 'ON' if crypto_enabled else 'OFF' }}</span>
-    </button>
-    <button class="toggle-btn {{ 'on' if stocks_enabled else 'off' }}" id="stocks-toggle" onclick="toggleStocks()">
-      📈 Stock Trading
-      <span class="tog-state">{{ 'ON' if stocks_enabled else 'OFF' }}</span>
     </button>
     <button class="toggle-btn {{ 'on' if watchlist_only else 'off watchlist' }}" id="watchlist-toggle" onclick="toggleWatchlistMode()">
       {{ '📋 Watchlist' if watchlist_only else '🌐 Market' }}
-      <span class="tog-state">{{ 'Trading' }}</span>
+      <span class="tog-state">Trading</span>
     </button>
     <button class="toggle-btn {{ 'on' if ingest_running == True else 'off' }}" id="ingest-toggle" onclick="toggleIngest()">
       📡 Data Ingest
       <span class="tog-state">{{ 'ON' if ingest_running == True else ('?' if ingest_running is none else 'OFF') }}</span>
     </button>
+    <a class="toggle-btn on" href="/stocks" style="text-decoration:none;">📈 Stocks →</a>
     <a class="logout-link" href="/logout">⏻</a>
   </div>
 </header>
@@ -1304,10 +1301,6 @@ async function loadEngineStats() {
     if (s.crypto_enabled !== undefined) {
       const btn = document.getElementById('crypto-toggle');
       if (btn) { btn.className = 'toggle-btn '+(s.crypto_enabled?'on crypto':'off'); btn.innerHTML = '₿ Crypto Trading <span class="tog-state">'+(s.crypto_enabled?'ON':'OFF')+'</span>'; }
-    }
-    if (s.stocks_enabled !== undefined) {
-      const btn = document.getElementById('stocks-toggle');
-      if (btn) { btn.className = 'toggle-btn '+(s.stocks_enabled?'on':'off'); btn.innerHTML = '📈 Stock Trading <span class="tog-state">'+(s.stocks_enabled?'ON':'OFF')+'</span>'; }
     }
     if (s.watchlist_only !== undefined) {
       const btn = document.getElementById('watchlist-toggle');
