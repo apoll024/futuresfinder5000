@@ -89,10 +89,18 @@ async def bar_handler(bar):
             print(f"  [{bar.symbol}] Circuit OPEN — pausing analysis for {BACKOFF_SECONDS//60} min")
 
 
+def _normalize_crypto_sym(s: str) -> str:
+    """Ensure Alpaca-required format: BTC/USD, not BTC."""
+    s = s.strip().upper()
+    if s and "/" not in s:
+        s = s + "/USD"
+    return s
+
+
 def _get_active_symbols() -> list:
     try:
         raw = get_setting("crypto_symbols", "BTC/USD,ETH/USD,SOL/USD")
-        return [s.strip() for s in raw.split(",") if s.strip()]
+        return [_normalize_crypto_sym(s) for s in raw.split(",") if s.strip()]
     except Exception:
         return ["BTC/USD", "ETH/USD", "SOL/USD"]
 
