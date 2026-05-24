@@ -108,7 +108,8 @@ def get_symbols() -> list[str]:
 
 
 def get_trade_mode() -> str:
-    return get_setting("trade_mode", "suggest")
+    mode = get_setting("trade_mode", "paper")
+    return mode if mode not in ("suggest",) else "paper"  # migrate legacy suggest → paper
 
 
 def get_approved_capital() -> float:
@@ -139,15 +140,20 @@ def get_crypto_enabled() -> bool:
     return get_setting("crypto_enabled", "true") == "true"
 
 
+def get_watchlist_only() -> bool:
+    """True = only trade watchlist symbols; False = market mode (any symbol)."""
+    return get_setting("watchlist_only", "true") == "true"
+
+
 def get_crypto_symbols() -> list[str]:
     raw = get_setting("crypto_symbols", "BTC/USD,ETH/USD,SOL/USD")
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
 
 def get_all_positions()-> list[dict]:
-    """Open positions: Alpaca in paper/live mode; derived from today's trade log in suggest mode."""
+    """Open positions: Alpaca in paper/live mode; derived from today's trade log otherwise."""
     mode = get_trade_mode()
-    if mode != "suggest":
+    if mode in ("paper", "live"):
         try:
             from trade.executor import get_client
             client = get_client()
@@ -395,6 +401,7 @@ def index():
         max_option_premium  = get_max_option_premium(),
         stocks_enabled      = get_stocks_enabled(),
         crypto_enabled      = get_crypto_enabled(),
+        watchlist_only      = get_watchlist_only(),
         crypto_symbols      = get_crypto_symbols(),
         ollama_ok           = ollama_healthy(),
         now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
@@ -407,9 +414,9 @@ def index():
 @app.route("/api/trade/toggle", methods=["POST"])
 @login_required
 def toggle_trading():
-    """Switch between suggest (off) and paper (on). Live requires manual env change."""
+    """Switch between off and paper trading modes. Live requires manual env change."""
     current  = get_trade_mode()
-    new_mode = "paper" if current == "suggest" else "suggest"
+    new_mode = "paper" if current in ("off", "suggest") else "off"
     set_setting("trade_mode", new_mode)
     return jsonify({"trade_mode": new_mode, "trading_on": new_mode == "paper"})
 
@@ -430,9 +437,21 @@ def api_toggle_ingest():
         c = client.containers.get("ff_ingest")
         if c.status == "running":
             c.stop(timeout=15)
+            try:
+                d = client.containers.get("ff_digest")
+                if d.status == "running":
+                    d.stop(timeout=10)
+            except Exception:
+                pass
             return jsonify({"running": False, "action": "stopped"})
         else:
             c.start()
+            try:
+                d = client.containers.get("ff_digest")
+                if d.status != "running":
+                    d.start()
+            except Exception:
+                pass
             return jsonify({"running": True, "action": "started"})
     except Exception as e:
         if "NotFound" in type(e).__name__:
@@ -468,6 +487,14 @@ def toggle_stocks():
     new = "false" if get_stocks_enabled() else "true"
     set_setting("stocks_enabled", new)
     return jsonify({"stocks_enabled": new == "true"})
+
+
+@app.route("/api/watchlist-mode/toggle", methods=["POST"])
+@login_required
+def toggle_watchlist_mode():
+    new = "false" if get_watchlist_only() else "true"
+    set_setting("watchlist_only", new)
+    return jsonify({"watchlist_only": new == "true"})
 
 
 @app.route("/api/crypto/toggle", methods=["POST"])
@@ -748,7 +775,7 @@ def crypto_engine_status():
     if on and mode == "live":
         engine_label, engine_cls = "LIVE", "positive"
     elif on:
-        engine_label, engine_cls = "SUGGEST", "accent"
+        engine_label, engine_cls = "PAPER", "accent"
     else:
         engine_label, engine_cls = "OFF", "negative"
 
@@ -757,6 +784,9 @@ def crypto_engine_status():
         "engine_label":    engine_label,
         "engine_cls":      engine_cls,
         "trade_mode":      mode,
+        "crypto_enabled":  on,
+        "stocks_enabled":  get_stocks_enabled(),
+        "watchlist_only":  get_watchlist_only(),
         "ingest_running":  ingest_st.get("running", False),
         "pnl":             stats["pnl"],
         "pnl_class":       stats["pnl_class"],
@@ -814,7 +844,8 @@ def api_pending_signals():
 @app.route("/api/trades")
 @login_required
 def api_trades():
-    return jsonify(recent_trades())
+    trades = recent_trades()
+    return jsonify([t for t in trades if t.get("mode") != "suggest"])
 
 
 @app.route("/api/stats")
@@ -881,7 +912,7 @@ def api_liquidate_position():
         return jsonify({"error": "No symbol provided"}), 400
 
     mode = get_trade_mode()
-    if mode == "suggest":
+    if mode not in ("paper", "live"):
         positions = get_all_positions()
         pos = next((p for p in positions if p["symbol"] == symbol), None)
         if not pos:
@@ -891,11 +922,11 @@ def api_liquidate_position():
             bar   = db.query(Bar).filter(Bar.symbol == symbol).order_by(Bar.ts.desc()).first()
             price = float(bar.close) if bar else pos["avg_entry"]
             db.add(Trade(symbol=symbol, side="sell", qty=pos["qty"],
-                         price=price, mode=mode, status="suggested"))
+                         price=price, mode=mode, status="paper"))
             db.commit()
         finally:
             db.close()
-        return jsonify({"status": "suggested", "symbol": symbol, "qty": pos["qty"]})
+        return jsonify({"status": "paper", "symbol": symbol, "qty": pos["qty"]})
 
     try:
         from trade.executor import get_client
@@ -913,18 +944,18 @@ def api_liquidate_all():
     if not positions:
         return jsonify({"status": "ok", "closed": 0})
 
-    if mode == "suggest":
+    if mode not in ("paper", "live"):
         db = Session()
         try:
             for pos in positions:
                 bar   = db.query(Bar).filter(Bar.symbol == pos["symbol"]).order_by(Bar.ts.desc()).first()
                 price = float(bar.close) if bar else pos["avg_entry"]
                 db.add(Trade(symbol=pos["symbol"], side="sell", qty=pos["qty"],
-                             price=price, mode=mode, status="suggested"))
+                             price=price, mode=mode, status="paper"))
             db.commit()
         finally:
             db.close()
-        return jsonify({"status": "suggested", "closed": len(positions)})
+        return jsonify({"status": "paper", "closed": len(positions)})
 
     try:
         from trade.executor import close_all_positions
@@ -1055,6 +1086,90 @@ def api_news_digest_run():
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"status": "started"})
+
+
+# ── API: AI Advisor ───────────────────────────────────────────────────────────
+
+@app.route("/api/ai-advisor", methods=["POST"])
+@login_required
+def api_ai_advisor():
+    """Streaming AI advisor: summarizes recent/planned trades and suggests watchlist changes."""
+    trades      = recent_trades(20)
+    pending     = pending_signals(10)
+    crypto_syms = get_crypto_symbols()
+    stock_syms  = get_symbols()
+    all_sigs    = latest_signals(crypto_syms + stock_syms[:5])
+    now         = datetime.now(ET)
+    mkt_open    = "09:45" <= now.strftime("%H:%M") <= "15:45"
+
+    sig_summary = [
+        {"symbol": s["symbol"], "action": s["action"],
+         "confidence": s["confidence"], "note": (s["reasoning"] or "")[:100]}
+        for s in all_sigs
+    ]
+
+    context = (
+        f"Date/Time: {now.strftime('%Y-%m-%d %H:%M ET')} | Market: {'OPEN' if mkt_open else 'CLOSED'}\n"
+        f"Crypto watchlist: {', '.join(crypto_syms)}\n"
+        f"Stock watchlist: {', '.join(stock_syms)}\n\n"
+        f"Recent trades (last 20):\n{json.dumps(trades, indent=2)}\n\n"
+        f"Pending signals (planned trades):\n{json.dumps(pending, indent=2)}\n\n"
+        f"Current signals:\n{json.dumps(sig_summary, indent=2)}"
+    )
+
+    prompt = (
+        "Using the trading data above, provide a concise advisor report covering:\n\n"
+        "1. **Recent Activity** — brief summary of what trades have been executed and their outcomes\n"
+        "2. **Planned Trades** — summary of signals queued for execution\n"
+        "3. **Watchlist Suggestions** — specific symbols to ADD (promising coins/pairs not currently tracked) "
+        "and symbols to REMOVE (underperforming, low signal quality, or inactive), with brief rationale for each\n"
+        "4. **Data Needs** — any specific market data, news, or user input that would help improve your analysis\n\n"
+        "Be specific and actionable. Cite actual values when available."
+    )
+
+    messages = [
+        {"role": "system", "content": (
+            "You are FuturesFinder5000 — an autonomous crypto and leveraged ETF trading AI. "
+            "Analyze trade history and signals to provide focused, actionable advisor reports. "
+            "Be concise, cite real numbers, and give specific ticker symbols for watchlist recommendations."
+        )},
+        {"role": "user", "content": f"CURRENT DATA:\n{context}\n\nREQUEST:\n{prompt}"},
+    ]
+
+    def generate():
+        try:
+            r = requests.post(
+                LLM_API_URL,
+                headers={"Content-Type": "application/json"},
+                json={"model": LLM_MODEL, "messages": messages,
+                      "stream": True, "temperature": 0.3, "max_tokens": 1200},
+                stream=True, timeout=(15, 180),
+            )
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                decoded = line.decode("utf-8")
+                if not decoded.startswith("data: "):
+                    continue
+                chunk = decoded[6:]
+                if chunk.strip() == "[DONE]":
+                    yield "data: [DONE]\n\n"
+                    return
+                try:
+                    obj   = json.loads(chunk)
+                    delta = obj["choices"][0]["delta"].get("content", "")
+                    if delta:
+                        yield f"data: {json.dumps({'content': delta})}\n\n"
+                except Exception:
+                    pass
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return Response(stream_with_context(generate()),
+                    content_type="text/event-stream",
+                    headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
 
 
 # ── API: options chain ─────────────────────────────────────────────────────────

@@ -77,6 +77,9 @@
     .toggle-btn.on  { background: rgba(16,185,129,.08);  color: var(--green2);  border-color: rgba(16,185,129,.3); }
     .toggle-btn.on.crypto { background: var(--pur-dim); color: var(--purple3); border-color: rgba(139,92,246,.4); }
     .toggle-btn:hover { filter: brightness(1.25); }
+    .tog-state { margin-left: 4px; opacity: .85; font-size: 10px; }
+    /* watchlist toggle — amber when in market (unrestricted) mode */
+    .toggle-btn.off.watchlist { background: rgba(251,191,36,.15); border-color: rgba(251,191,36,.4); color: #fbbf24; }
     .logout-link {
       padding: 5px 12px; border-radius: 6px; font-size: 11px; font-weight: 600;
       background: var(--bg); color: var(--muted); border: 1px solid var(--border2);
@@ -451,6 +454,29 @@
     .btn-send:disabled { opacity: .4; cursor: default; }
     .chat-hint { font-size: 9px; color: var(--muted); padding: 0 8px 5px; text-align: right; }
 
+    /* ── AI Advisor ── */
+    .advisor-box {
+      background: var(--surface2); border: 1px solid var(--border2);
+      border-radius: 10px; padding: 14px; margin-top: 4px;
+    }
+    .advisor-output {
+      min-height: 80px; max-height: 420px; overflow-y: auto;
+      font-size: 11px; line-height: 1.65; color: var(--text);
+      white-space: pre-wrap; word-break: break-word;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px 12px; margin-top: 8px;
+    }
+    .advisor-output.thinking { color: var(--muted); font-style: italic; }
+    .advisor-toolbar {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;
+    }
+    .btn-advisor { padding: 5px 14px; border-radius: 6px; font-weight: 800; font-size: 11px;
+      cursor: pointer; border: 1px solid rgba(139,92,246,.4);
+      background: var(--pur-dim); color: var(--purple3); transition: filter .15s; }
+    .btn-advisor:hover { filter: brightness(1.25); }
+    .btn-advisor:disabled { opacity: .4; cursor: default; }
+    .advisor-meta { font-size: 9px; color: var(--muted); margin-left: auto; }
+
     /* ── KB (sidebar) ── */
     .kb-add-row {
       background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 9px 10px;
@@ -520,15 +546,21 @@
   </div>
 
   <div class="hdr-right">
-    <a class="toggle-btn on crypto" href="/stocks" style="text-decoration:none;">📈 Stocks</a>
     <button class="toggle-btn {{ 'on crypto' if crypto_enabled else 'off' }}" id="crypto-toggle" onclick="toggleCrypto()">
-      {{ '₿ CRYPTO ON' if crypto_enabled else '○ CRYPTO OFF' }}
+      {{ '₿ Crypto Trading' if crypto_enabled else '₿ Crypto Trading' }}
+      <span class="tog-state">{{ 'ON' if crypto_enabled else 'OFF' }}</span>
     </button>
-    <button class="toggle-btn {{ 'on' if trading_on else 'off' }}" id="trade-toggle" onclick="toggleTrading()">
-      {{ '● LIVE' if trading_on else '○ OFF' }}
+    <button class="toggle-btn {{ 'on' if stocks_enabled else 'off' }}" id="stocks-toggle" onclick="toggleStocks()">
+      📈 Stock Trading
+      <span class="tog-state">{{ 'ON' if stocks_enabled else 'OFF' }}</span>
+    </button>
+    <button class="toggle-btn {{ 'on' if watchlist_only else 'off watchlist' }}" id="watchlist-toggle" onclick="toggleWatchlistMode()">
+      {{ '📋 Watchlist' if watchlist_only else '🌐 Market' }}
+      <span class="tog-state">{{ 'Trading' }}</span>
     </button>
     <button class="toggle-btn {{ 'on' if ingest_running == True else 'off' }}" id="ingest-toggle" onclick="toggleIngest()">
-      {{ '▶ FEED' if ingest_running == True else '■ FEED' }}
+      📡 Data Ingest
+      <span class="tog-state">{{ 'ON' if ingest_running == True else ('?' if ingest_running is none else 'OFF') }}</span>
     </button>
     <a class="logout-link" href="/logout">⏻</a>
   </div>
@@ -604,7 +636,7 @@
     <div class="stats-row">
       <div class="stat-card hl">
         <div class="lbl">Engine</div>
-        <div class="val" id="stat-engine">{{ 'LIVE' if stats.trade_mode == 'live' and crypto_enabled else ('SUGGEST' if crypto_enabled else 'OFF') }}</div>
+        <div class="val" id="stat-engine">{{ 'LIVE' if stats.trade_mode == 'live' and crypto_enabled else ('PAPER' if crypto_enabled else 'OFF') }}</div>
       </div>
       <div class="stat-card hl">
         <div class="lbl">Daily P&amp;L</div>
@@ -854,6 +886,24 @@
       </div>
     </div>
 
+    <!-- ── AI Advisor ── -->
+    <div class="sec-hdr clickable" onclick="toggleSection('advisor-body','advisor-chevron')">
+      <span class="dot purple"></span>
+      🤖 AI Advisor
+      <span class="chevron" id="advisor-chevron">▶</span>
+    </div>
+    <div id="advisor-body" class="collapsible hidden">
+      <div class="section" style="padding-top:10px;">
+        <div class="advisor-box">
+          <div class="advisor-toolbar">
+            <button class="btn-advisor" id="btn-advisor-run" onclick="runAdvisor()">🤖 Run Analysis</button>
+            <span class="advisor-meta" id="advisor-meta">Analyzes recent trades, planned signals &amp; watchlist</span>
+          </div>
+          <div class="advisor-output thinking" id="advisor-output">Click Run Analysis to get AI insights on your trading activity, planned trades, and watchlist recommendations.</div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── System / Resource ── -->
     <div class="sec-hdr clickable" onclick="toggleSection('sys-body','sys-chevron')">
       <span class="dot grey"></span>
@@ -1038,21 +1088,37 @@ async function toggleCrypto() {
   const data = await fetch('/api/crypto/toggle', {method:'POST'}).then(r=>r.json());
   const on   = data.crypto_enabled;
   btn.className   = 'toggle-btn ' + (on ? 'on crypto' : 'off');
-  btn.textContent = on ? '₿ CRYPTO ON' : '○ CRYPTO OFF';
-  toast(on ? 'Crypto ENABLED' : 'Crypto DISABLED');
+  btn.innerHTML   = '₿ Crypto Trading <span class="tog-state">' + (on ? 'ON' : 'OFF') + '</span>';
+  toast(on ? 'Crypto Trading ENABLED' : 'Crypto Trading DISABLED');
+  btn.disabled = false;
+}
+
+async function toggleStocks() {
+  const btn = document.getElementById('stocks-toggle');
+  btn.disabled = true;
+  const data = await fetch('/api/stocks/toggle', {method:'POST'}).then(r=>r.json());
+  const on   = data.stocks_enabled;
+  btn.className   = 'toggle-btn ' + (on ? 'on' : 'off');
+  btn.innerHTML   = '📈 Stock Trading <span class="tog-state">' + (on ? 'ON' : 'OFF') + '</span>';
+  toast(on ? 'Stock Trading ENABLED' : 'Stock Trading DISABLED');
+  btn.disabled = false;
+}
+
+async function toggleWatchlistMode() {
+  const btn = document.getElementById('watchlist-toggle');
+  btn.disabled = true;
+  const data = await fetch('/api/watchlist-mode/toggle', {method:'POST'}).then(r=>r.json());
+  const wlOnly = data.watchlist_only;
+  btn.className = 'toggle-btn ' + (wlOnly ? 'on' : 'off watchlist');
+  btn.innerHTML = (wlOnly ? '📋 Watchlist' : '🌐 Market') + ' <span class="tog-state">Trading</span>';
+  toast(wlOnly ? 'Watchlist Trading — only watchlist symbols will be traded' : '🌐 Market Trading — all symbols eligible');
   btn.disabled = false;
 }
 
 async function toggleTrading() {
-  const btn = document.getElementById('trade-toggle');
-  btn.disabled = true;
   const data = await fetch('/api/trade/toggle', {method:'POST'}).then(r=>r.json());
-  const on   = data.trading_on;
-  btn.className   = 'toggle-btn ' + (on ? 'on' : 'off');
-  btn.textContent = on ? '● LIVE' : '○ OFF';
   document.getElementById('badge-mode').textContent = data.trade_mode.toUpperCase();
-  toast(on ? 'Trading ENABLED (paper)' : 'Trading DISABLED');
-  btn.disabled = false;
+  toast(data.trading_on ? 'Trading ENABLED (paper)' : 'Trading DISABLED');
 }
 
 async function toggleIngest() {
@@ -1063,11 +1129,11 @@ async function toggleIngest() {
     const data = await fetch('/api/ingest/toggle', {method:'POST'}).then(r=>r.json());
     if (data.error) { toast(data.error, false); return; }
     const on = data.running;
-    btn.className   = 'toggle-btn ' + (on ? 'on' : 'off');
-    btn.textContent = on ? '▶ FEED' : '■ FEED';
+    btn.className = 'toggle-btn ' + (on ? 'on' : 'off');
+    btn.innerHTML = '📡 Data Ingest <span class="tog-state">' + (on ? 'ON' : 'OFF') + '</span>';
     badge.className = 'badge ' + (on ? 'green' : 'red');
     badge.textContent = on ? 'Ingest ▶' : 'Ingest ■';
-    toast(on ? 'Ingestion STARTED' : 'Ingestion STOPPED', on);
+    toast(on ? 'Data Ingestion STARTED (market data + news)' : 'Data Ingestion STOPPED', on);
   } catch(e) { toast('Ingest toggle failed', false); }
   finally { btn.disabled = false; }
 }
@@ -1150,6 +1216,47 @@ async function loadDbStats() {
 // ════════════════════════════════════════════════════════════════════════════
 // ENGINE STATS (crypto trading engine snapshot)
 // ════════════════════════════════════════════════════════════════════════════
+async function runAdvisor() {
+  const out  = document.getElementById('advisor-output');
+  const btn  = document.getElementById('btn-advisor-run');
+  const meta = document.getElementById('advisor-meta');
+  btn.disabled = true;
+  out.className = 'advisor-output thinking';
+  out.textContent = '⏳ Analyzing recent trades, pending signals, and watchlist…';
+  meta.textContent = 'Running…';
+  try {
+    const resp = await fetch('/api/ai-advisor');
+    if (!resp.ok) { out.textContent = '⚠ Analysis failed: ' + resp.status; return; }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let full = '';
+    out.className = 'advisor-output';
+    out.textContent = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, {stream: true});
+      chunk.split('\n').forEach(line => {
+        if (line.startsWith('data: ')) {
+          const tok = line.slice(6);
+          if (tok === '[DONE]') return;
+          try {
+            const j = JSON.parse(tok);
+            if (j.text) { full += j.text; out.textContent = full; out.scrollTop = out.scrollHeight; }
+            if (j.error) { out.textContent = '⚠ ' + j.error; }
+          } catch {}
+        }
+      });
+    }
+    meta.textContent = 'Last run: ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    out.className = 'advisor-output thinking';
+    out.textContent = '⚠ Error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function loadEngineStats() {
   try {
     const s = await fetch('/api/crypto/engine-status').then(r=>r.json());
@@ -1190,13 +1297,21 @@ async function loadEngineStats() {
     if (s.ingest_running !== undefined && s.ingest_running !== null) {
       const on = s.ingest_running;
       const it = document.getElementById('ingest-toggle');
-      if (it) { it.className = 'toggle-btn '+(on?'on':'off'); it.textContent = on?'▶ FEED':'■ FEED'; }
+      if (it) { it.className = 'toggle-btn '+(on?'on':'off'); it.innerHTML = '📡 Data Ingest <span class="tog-state">'+(on?'ON':'OFF')+'</span>'; }
       const bi = document.getElementById('badge-ingest');
       if (bi) { bi.className = 'badge '+(on?'green':'red'); bi.textContent = on?'Ingest ▶':'Ingest ■'; }
     }
     if (s.crypto_enabled !== undefined) {
       const btn = document.getElementById('crypto-toggle');
-      if (btn) { btn.className = 'toggle-btn '+(s.crypto_enabled?'on crypto':'off'); btn.textContent = s.crypto_enabled?'₿ CRYPTO ON':'○ CRYPTO OFF'; }
+      if (btn) { btn.className = 'toggle-btn '+(s.crypto_enabled?'on crypto':'off'); btn.innerHTML = '₿ Crypto Trading <span class="tog-state">'+(s.crypto_enabled?'ON':'OFF')+'</span>'; }
+    }
+    if (s.stocks_enabled !== undefined) {
+      const btn = document.getElementById('stocks-toggle');
+      if (btn) { btn.className = 'toggle-btn '+(s.stocks_enabled?'on':'off'); btn.innerHTML = '📈 Stock Trading <span class="tog-state">'+(s.stocks_enabled?'ON':'OFF')+'</span>'; }
+    }
+    if (s.watchlist_only !== undefined) {
+      const btn = document.getElementById('watchlist-toggle');
+      if (btn) { btn.className = 'toggle-btn '+(s.watchlist_only?'on':'off watchlist'); btn.innerHTML = (s.watchlist_only?'📋 Watchlist':'🌐 Market')+' <span class="tog-state">Trading</span>'; }
     }
   } catch(e) { console.warn('Engine stats error', e); }
 }

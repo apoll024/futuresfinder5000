@@ -338,9 +338,10 @@ def run_analysis(symbol: str):
 
     print(f"  [{symbol}] {sig.action.upper()} conf={sig.confidence:.2f} | {sig.reasoning[:100]}")
 
-    # Handle dynamic symbol addition
+    # Handle dynamic symbol addition (market mode only — blocked in watchlist_only mode)
     new_sym = str(result.get("add_symbol") or "").strip().upper()
-    if new_sym and 1 < len(new_sym) <= 6 and new_sym.isalpha():
+    if (new_sym and 1 < len(new_sym) <= 6 and new_sym.isalpha()
+            and get_setting("watchlist_only", "true") != "true"):
         current = get_setting("symbols")
         current_list = [s.strip() for s in current.split(",") if s.strip()]
         if new_sym not in current_list:

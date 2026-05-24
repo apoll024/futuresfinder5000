@@ -271,6 +271,14 @@ def execute_signal(signal_id: int):
         session.close()
         return
 
+    # Watchlist-only mode: skip symbols not in the current stock watchlist
+    if get_setting("watchlist_only", "true") == "true":
+        wl = [s.strip().upper() for s in get_setting("symbols", "").split(",") if s.strip()]
+        if wl and sig.symbol.upper() not in wl:
+            print(f"  [executor] SKIP — {sig.symbol} not in watchlist (watchlist_only mode)")
+            session.close()
+            return
+
     # Leveraged ETFs: reduce position size vs regular stocks due to amplified moves
     indicators = json.loads(sig.indicators or "{}")
     price      = indicators.get("close", 1.0)
@@ -344,6 +352,14 @@ def execute_crypto_signal(signal_id: int):
         print(f"  [executor] Below confidence threshold ({sig.confidence:.2f} < {MIN_CONFIDENCE}) — skip")
         session.close()
         return
+
+    # Watchlist-only mode: skip symbols not in the current crypto watchlist
+    if get_setting("watchlist_only", "true") == "true":
+        crypto_wl = [s.strip().upper() for s in get_setting("crypto_symbols", "").split(",") if s.strip()]
+        if crypto_wl and sig.symbol.upper() not in crypto_wl:
+            print(f"  [executor] SKIP — {sig.symbol} not in crypto watchlist (watchlist_only mode)")
+            session.close()
+            return
 
     indicators = json.loads(sig.indicators or "{}")
     price      = indicators.get("close", 1.0)

@@ -40,6 +40,21 @@ signal.signal(signal.SIGINT,  _handle_exit)
 
 RSS_FEEDS = [
     {
+        "name": "CoinDesk",
+        "url":  "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        "tags": "CRYPTO,NEWS",
+    },
+    {
+        "name": "Decrypt",
+        "url":  "https://decrypt.co/feed",
+        "tags": "CRYPTO,NEWS",
+    },
+    {
+        "name": "CryptoSlate",
+        "url":  "https://cryptoslate.com/feed/",
+        "tags": "CRYPTO,NEWS",
+    },
+    {
         "name": "MarketWatch Top Stories",
         "url":  "https://feeds.marketwatch.com/marketwatch/topstories/",
         "tags": "MARKET,NEWS",
