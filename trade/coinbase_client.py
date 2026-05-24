@@ -15,22 +15,61 @@ import jwt  # PyJWT with cryptography backend (PyJWT[crypto])
 CB_KEY_NAME = os.getenv("COINBASE_API_KEY_NAME", "")
 
 
+def _rebuild_b64_body(body: str) -> str:
+    """Remove 'n' artifacts at 64-char line boundaries.
+
+    When a PEM key is stored in a .env with \\n notation, some env-var
+    pipelines drop the backslash, leaving bare 'n' chars where newlines
+    should be.  Because 'n' is a valid base64 character, regex stripping
+    won't catch it — we must remove it specifically at 64-char boundaries.
+    """
+    clean = []
+    i = 0
+    while i < len(body):
+        chunk = body[i:i + 64]
+        clean.append(chunk)
+        i += 64
+        if i < len(body) and body[i] == "n":
+            i += 1  # skip newline-artifact 'n'
+    return "".join(clean)
+
+
 def _sanitize_pem(raw: str) -> str:
     """Normalize a PEM private key string.
 
     Handles common corruption from env-var copy-paste:
-    - Restores real newlines from literal '\\n' sequences
+    - Restores real newlines from literal \\n sequences
     - Strips carriage returns (Windows CRLF)
-    - Removes non-base64 bytes from key body lines (invalid byte error fix)
+    - Fixes bare 'n' used as newline substitute (backslash dropped in env pipeline)
+    - Rebuilds proper 64-char-per-line PEM body
     """
+    if not raw:
+        return raw
+
+    # Convert literal \n (backslash + n) to actual newlines
     pem = raw.replace("\\n", "\n").replace("\r", "")
-    lines = []
-    for line in pem.splitlines():
-        if line.startswith("-----"):
-            lines.append(line)
-        else:
-            lines.append(_re.sub(r"[^A-Za-z0-9+/=]", "", line))
-    return "\n".join(lines)
+
+    # If still no newlines, bare 'n' chars may have replaced them
+    if "\n" not in pem and "-----BEGIN" in pem and "-----END" in pem:
+        pem = _re.sub(r"(-----[A-Z ]+-----)\s*n\s*", r"\1\n", pem)
+        pem = _re.sub(r"\s*n\s*(-----[A-Z ]+-----)", r"\n\1", pem)
+
+    # Extract header / body / footer and rebuild with correct line wrapping
+    m = _re.search(r"(-----BEGIN[^-]*-----)\s*(.*?)\s*(-----END[^-]*-----)",
+                   pem, _re.DOTALL)
+    if not m:
+        return pem
+
+    header, body_raw, footer = m.group(1), m.group(2), m.group(3)
+    body = body_raw.replace("\n", "").replace("\r", "").replace(" ", "")
+    body = _rebuild_b64_body(body)
+    wrapped = "\n".join(body[i:i + 64] for i in range(0, len(body), 64))
+    return f"{header}\n{wrapped}\n{footer}\n"
+
+
+def _get_private_key() -> str:
+    """Lazy-read private key so container restarts aren't needed after .env edits."""
+    return _sanitize_pem(os.getenv("COINBASE_API_PRIVATE_KEY", ""))
 
 
 CB_PRIVATE_KEY = _sanitize_pem(os.getenv("COINBASE_API_PRIVATE_KEY", ""))
@@ -58,7 +97,7 @@ def _build_jwt(method: str, path: str) -> str:
     }
     return jwt.encode(
         payload,
-        CB_PRIVATE_KEY,
+        _get_private_key(),
         algorithm="ES256",
         headers={"kid": CB_KEY_NAME, "nonce": secrets.token_hex(10)},
     )
