@@ -18,6 +18,15 @@ from db.models import Session, Bar, Signal, get_setting
 
 LLM_API_URL    = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
 LLM_MODEL      = os.getenv("LLM_MODEL",   "llama3.2:3b")
+GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
+
+
+def _llm_headers() -> dict:
+    h = {"Content-Type": "application/json"}
+    if GITHUB_TOKEN:
+        h["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+        h["Copilot-Integration-Id"] = "vscode-chat"
+    return h
 CRYPTO_CV_BASE = "https://cryptocurrency.cv"
 
 # Fear & Greed cache — index only updates daily; cache 1 hour
@@ -308,7 +317,7 @@ Respond ONLY with valid JSON, no markdown:
 {{"action":"buy"|"sell"|"hold","confidence":0.0-1.0,"reasoning":"<concise reason ≤120 chars>"}}"""
 
     try:
-        r = requests.post(LLM_API_URL, json={
+        r = requests.post(LLM_API_URL, headers=_llm_headers(), json={
             "model": LLM_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,

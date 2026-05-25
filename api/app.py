@@ -24,6 +24,15 @@ app.secret_key = os.getenv("FLASK_SECRET", "ff5k-change-me-in-prod-32bytes!!")
 ET            = ZoneInfo("America/New_York")
 LLM_API_URL   = os.getenv("LLM_API_URL",  "http://ollama:11434/v1/chat/completions")
 LLM_MODEL     = os.getenv("LLM_MODEL",    "llama3.2:3b")
+GITHUB_TOKEN  = os.getenv("GITHUB_TOKEN", "")
+
+
+def _llm_headers() -> dict:
+    h = {"Content-Type": "application/json"}
+    if GITHUB_TOKEN:
+        h["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+        h["Copilot-Integration-Id"] = "vscode-chat"
+    return h
 
 # Auth credentials — stored as SHA-256 hashes; set via env or use defaults
 _AUTH_USER     = os.getenv("DASHBOARD_USER", "admin")
@@ -73,6 +82,11 @@ def logout():
 
 def ollama_healthy() -> bool:
     try:
+        if GITHUB_TOKEN:
+            r = requests.post(LLM_API_URL, headers=_llm_headers(),
+                              json={"model": LLM_MODEL, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
+                              timeout=5)
+            return r.ok
         r = requests.get(LLM_API_URL.replace("/v1/chat/completions", "/api/tags"), timeout=3)
         return r.ok
     except Exception:
@@ -1067,7 +1081,7 @@ def api_positions_ai_review():
         try:
             r = requests.post(
                 LLM_API_URL,
-                headers={"Content-Type": "application/json"},
+                headers=_llm_headers(),
                 json={"model": LLM_MODEL, "messages": messages,
                       "stream": True, "temperature": 0.1, "max_tokens": 1024},
                 stream=True, timeout=(15, 120),
@@ -1188,7 +1202,7 @@ def api_ai_advisor():
         try:
             r = requests.post(
                 LLM_API_URL,
-                headers={"Content-Type": "application/json"},
+                headers=_llm_headers(),
                 json={"model": LLM_MODEL, "messages": messages,
                       "stream": True, "temperature": 0.3, "max_tokens": 1200},
                 stream=True, timeout=(15, 180),
@@ -1530,7 +1544,7 @@ def api_chat():
         try:
             r = requests.post(
                 LLM_API_URL,
-                headers={"Content-Type": "application/json"},
+                headers=_llm_headers(),
                 json={"model": LLM_MODEL, "messages": messages,
                       "stream": True, "temperature": 0.25, "max_tokens": 1024},
                 stream=True, timeout=(15, 300),

@@ -29,8 +29,17 @@ import requests
 from zoneinfo import ZoneInfo
 from db.models import Session, Bar, Signal, Trade, init_db, get_setting, set_setting
 
-LLM_API_URL = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
-MODEL       = os.getenv("LLM_MODEL", "llama3.2:3b")
+LLM_API_URL   = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
+MODEL         = os.getenv("LLM_MODEL", "llama3.2:3b")
+GITHUB_TOKEN  = os.getenv("GITHUB_TOKEN", "")
+
+
+def _llm_headers() -> dict:
+    h = {"Content-Type": "application/json"}
+    if GITHUB_TOKEN:
+        h["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+        h["Copilot-Integration-Id"] = "vscode-chat"
+    return h
 TRADE_MODE  = os.getenv("TRADE_MODE", "suggest")
 API_KEY     = os.getenv("ALPACA_API_KEY")
 SECRET_KEY  = os.getenv("ALPACA_SECRET_KEY")
@@ -281,7 +290,7 @@ Respond ONLY with valid JSON — no prose, no explanation outside the JSON:
 add_symbol: set to a ticker string ONLY if you identify a high-conviction opportunity in a liquid US equity or leveraged ETF not currently tracked. Must be alphanumeric, ≤ 5 chars. Otherwise null."""
 
     r = requests.post(LLM_API_URL,
-                      headers={"Content-Type": "application/json"},
+                      headers=_llm_headers(),
                       json={"model": MODEL,
                             "messages": [{"role": "user", "content": prompt}],
                             "max_tokens": 450, "temperature": 0.1},
