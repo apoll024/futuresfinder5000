@@ -93,6 +93,12 @@ def product_exists(product_id: str) -> bool:
         return False
 
 
+def get_order(order_id: str) -> dict:
+    """Return a Coinbase historical order by order id."""
+    data = _req("GET", f"/api/v3/brokerage/orders/historical/{order_id}")
+    return data.get("order") or data
+
+
 def _build_jwt(method: str, path: str) -> str:
     now = int(time.time())
     payload = {

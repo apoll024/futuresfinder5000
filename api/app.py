@@ -235,15 +235,48 @@ def fetch_top_crypto_symbols(limit: int = 20) -> list[str]:
 
 
 def get_all_positions()-> list[dict]:
-    """Open positions: Alpaca in paper/live mode; derived from today's trade log otherwise."""
+    """Open positions from Coinbase crypto holdings plus Alpaca stock positions."""
+    result = []
+    db = Session()
+
+    try:
+        from trade.coinbase_client import is_configured, get_portfolio_summary
+        if is_configured():
+            summary = get_portfolio_summary()
+            cash = {"USD", "USDC", "USDT", "DAI"}
+            dust_floor = float(os.getenv("COINBASE_POSITION_DUST_USD", "1.00"))
+            for bal in summary.get("balances", []):
+                base = str(bal.get("currency", "")).upper()
+                qty = float(bal.get("available_balance", bal.get("balance", 0)) or 0)
+                if not base or base in cash or qty <= 0:
+                    continue
+                sym = f"{base}/USD"
+                bar = db.query(Bar).filter(Bar.symbol == sym).order_by(Bar.ts.desc()).first()
+                if not bar:
+                    continue
+                cur_price = float(bar.close or 0)
+                market_value = qty * cur_price
+                if market_value < dust_floor:
+                    continue
+                result.append({
+                    "symbol":         sym,
+                    "qty":            round(qty, 8),
+                    "avg_entry":      round(cur_price, 4),
+                    "current_price":  round(cur_price, 4),
+                    "unrealized_pnl": 0.0,
+                    "pct_change":     0.0,
+                    "market_value":   round(market_value, 2),
+                    "broker":         "coinbase",
+                })
+    except Exception as e:
+        print(f"[positions] Coinbase error: {e}")
+
     mode = get_trade_mode()
     if mode in ("paper", "live"):
         try:
             from trade.executor import get_client
             client = get_client()
             raw    = client.get_all_positions()
-            db     = Session()
-            result = []
             for pos in raw:
                 sym       = pos.symbol
                 bar       = db.query(Bar).filter(Bar.symbol == sym).order_by(Bar.ts.desc()).first()
@@ -260,20 +293,22 @@ def get_all_positions()-> list[dict]:
                     "unrealized_pnl": unreal,
                     "pct_change":     pct,
                     "market_value":   round(qty * cur_price, 2),
+                    "broker":         "alpaca",
                 })
-            db.close()
             return result
         except Exception as e:
             print(f"[positions] Alpaca error: {e}")
-            return []
+            return result
+        finally:
+            db.close()
 
     # Suggest mode — derive net positions from today's trade log
-    db = Session()
     try:
         today_start = datetime.combine(date.today(), datetime.min.time())
         trades      = db.query(Trade).filter(Trade.ts >= today_start).order_by(Trade.ts.asc()).all()
-    finally:
+    except Exception:
         db.close()
+        return result
 
     net_qty:    dict[str, float] = {}
     total_cost: dict[str, float] = {}
@@ -292,13 +327,11 @@ def get_all_positions()-> list[dict]:
             total_cost[sym] -= avg * removed
             net_qty[sym]    = max(0.0, net_qty[sym] - qty)
 
-    result = []
-    db2    = Session()
     for sym, qty in net_qty.items():
         if qty <= 0:
             continue
         avg_entry = total_cost[sym] / qty if qty > 0 else 0.0
-        bar       = db2.query(Bar).filter(Bar.symbol == sym).order_by(Bar.ts.desc()).first()
+        bar       = db.query(Bar).filter(Bar.symbol == sym).order_by(Bar.ts.desc()).first()
         cur_price = float(bar.close) if bar else avg_entry
         unreal    = round((cur_price - avg_entry) * qty, 2)
         pct       = round((cur_price - avg_entry) / avg_entry * 100, 2) if avg_entry else 0.0
@@ -310,8 +343,9 @@ def get_all_positions()-> list[dict]:
             "unrealized_pnl": unreal,
             "pct_change":     pct,
             "market_value":   round(qty * cur_price, 2),
+            "broker":         "trade-log",
         })
-    db2.close()
+    db.close()
     return result
 
 

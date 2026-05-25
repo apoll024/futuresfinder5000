@@ -114,6 +114,19 @@ def fetch_available_usdc() -> float | None:
         return None
 
 
+def fetch_coinbase_position(symbol: str) -> dict | None:
+    """Return current Coinbase base-asset holding for a crypto symbol."""
+    try:
+        from trade.coinbase_client import is_configured, get_crypto_balance
+        if not is_configured() or "/" not in symbol:
+            return None
+        base = symbol.split("/")[0].upper()
+        qty = get_crypto_balance(base)
+        return {"base": base, "qty": qty}
+    except Exception:
+        return None
+
+
 # ── DB context fetcher ────────────────────────────────────────────────────────
 
 def build_db_context(symbol: str, service: str = "analyze") -> str:
@@ -181,6 +194,14 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
             )
 
         # 2. Today's trades for this symbol
+        cb_position = fetch_coinbase_position(symbol) if is_crypto else None
+        if cb_position is not None:
+            qty = float(cb_position.get("qty") or 0)
+            if qty > 0:
+                lines.append(f"\nLIVE COINBASE POSITION: LONG {qty:.8f} {cb_position['base']}")
+            else:
+                lines.append(f"\nLIVE COINBASE POSITION: FLAT {cb_position['base']}")
+
         today_trades = (
             db.query(Trade)
             .filter(
@@ -198,10 +219,12 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
                     f"{t.side.upper()} {t.qty} @ ${t.price:.2f}  "
                     f"status={t.status}  mode={t.mode}"
                 )
-            bought_qty = sum(t.qty for t in today_trades if t.side == "buy" and t.status in ("filled", "suggested"))
-            sold_qty   = sum(t.qty for t in today_trades if t.side == "sell" and t.status in ("filled", "suggested"))
+            bought_qty = sum(t.qty for t in today_trades if t.side == "buy" and t.status in ("filled", "submitted", "suggested"))
+            sold_qty   = sum(t.qty for t in today_trades if t.side == "sell" and t.status in ("filled", "submitted", "suggested"))
             net_qty    = bought_qty - sold_qty
-            if net_qty > 0:
+            if cb_position is not None and float(cb_position.get("qty") or 0) > 0:
+                lines.append(f"  → LIVE POSITION OVERRIDES TRADE LOG: LONG {float(cb_position.get('qty') or 0):.8f} {cb_position['base']}")
+            elif net_qty > 0:
                 lines.append(f"  → NET POSITION: LONG {net_qty:.2f} shares/units")
             else:
                 lines.append(f"  → NET POSITION: FLAT")
