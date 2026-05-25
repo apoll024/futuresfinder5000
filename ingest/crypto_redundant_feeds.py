@@ -64,7 +64,15 @@ def _alpaca_client():
 
 def _symbols() -> list[str]:
     raw = get_setting("crypto_symbols", os.getenv("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD"))
-    return [s.strip().upper() for s in raw.split(",") if s.strip()]
+    symbols = []
+    for s in raw.split(","):
+        sym = s.strip().upper()
+        if not sym:
+            continue
+        if "/" not in sym:
+            sym = f"{sym}/USD"
+        symbols.append(sym)
+    return symbols
 
 
 def _minute(dt: datetime) -> datetime:
