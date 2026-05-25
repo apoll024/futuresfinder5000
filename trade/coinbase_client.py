@@ -85,6 +85,14 @@ def coinbase_symbol(alpaca_symbol: str) -> str:
     return alpaca_symbol.replace("/", "-")
 
 
+def product_exists(product_id: str) -> bool:
+    try:
+        data = _req("GET", f"/api/v3/brokerage/products/{product_id}")
+        return data.get("product_id") == product_id
+    except Exception:
+        return False
+
+
 def _build_jwt(method: str, path: str) -> str:
     now = int(time.time())
     payload = {

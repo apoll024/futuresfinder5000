@@ -81,13 +81,13 @@ def _float_from_preview(preview: dict, key: str) -> float:
         return 0.0
 
 
-def _coinbase_buy_size(cb_sym: str, available_usd: float, max_usd: float) -> tuple[float, str]:
+def _coinbase_buy_size(cb_sym: str, available_quote: float, max_usd: float) -> tuple[float, str]:
     from trade.coinbase_client import preview_market_buy
 
     buffers = [COINBASE_BUY_CASH_BUFFER, 0.95, 0.90, 0.85]
     tried = []
     for buffer in buffers:
-        quote = round(min(max_usd, available_usd * buffer), 2)
+        quote = round(min(max_usd, available_quote * buffer), 2)
         if quote < 1:
             continue
         try:
@@ -96,12 +96,24 @@ def _coinbase_buy_size(cb_sym: str, available_usd: float, max_usd: float) -> tup
             total = _float_from_preview(preview, "order_total")
             fees = _float_from_preview(preview, "commission_total")
             required = (total or quote) + fees
-            if not errs and required <= available_usd:
+            if not errs and required <= available_quote:
                 return quote, f"preview ok: order=${total or quote:.2f}, fees=${fees:.2f}, required=${required:.2f}"
             tried.append(f"${quote:.2f}: errs={errs or 'none'}, required=${required:.2f}")
         except Exception as e:
             tried.append(f"${quote:.2f}: preview error={e}")
     return 0.0, "; ".join(tried)
+
+
+def _coinbase_buy_product(symbol: str) -> tuple[str, float, str]:
+    from trade.coinbase_client import coinbase_symbol, get_crypto_balance, product_exists
+
+    base = symbol.split("/")[0].upper()
+    usd = get_crypto_balance("USD")
+    usdc = get_crypto_balance("USDC")
+    usdc_product = f"{base}-USDC"
+    if usdc >= usd and usdc > 0 and product_exists(usdc_product):
+        return usdc_product, usdc, "USDC"
+    return coinbase_symbol(symbol), usd, "USD"
 
 
 def close_all_positions(reason: str = "EOD"):
@@ -457,19 +469,18 @@ def execute_crypto_signal(signal_id: int):
             # ── Coinbase execution ──────────────────────────────────────────
             cb_sym = coinbase_symbol(sig.symbol)
             if sig.action == "buy":
-                # Use min of configured max and actual available USD+USDC balance
-                available_usd  = get_crypto_balance("USD") + get_crypto_balance("USDC")
-                buy_size, size_note = _coinbase_buy_size(cb_sym, available_usd, max_pos_db)
+                cb_sym, available_quote, quote_currency = _coinbase_buy_product(sig.symbol)
+                buy_size, size_note = _coinbase_buy_size(cb_sym, available_quote, max_pos_db)
                 if buy_size < 1.0:
                     trade.status = "rejected"
                     trade.alpaca_id = "insufficient-funds"
-                    print(f"  [executor] Insufficient balance after Coinbase fees (${available_usd:.2f}) — {size_note}")
+                    print(f"  [executor] Insufficient {quote_currency} after Coinbase fees (${available_quote:.2f}) — {size_note}")
                     session.add(trade)
                     sig.acted_on = True
                     session.commit()
                     session.close()
                     return
-                print(f"  [executor] Buying ${buy_size:.2f} of {cb_sym} (balance: ${available_usd:.2f}, max: ${max_pos_db:.2f}; {size_note})")
+                print(f"  [executor] Buying ${buy_size:.2f} of {cb_sym} (available {quote_currency}: ${available_quote:.2f}, max: ${max_pos_db:.2f}; {size_note})")
                 resp      = place_market_buy(cb_sym, buy_size)
                 trade.qty = round(buy_size / price, 6) if price > 0 else 0
             else:
