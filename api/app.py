@@ -82,7 +82,7 @@ def logout():
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def ollama_healthy() -> bool:
+def llm_healthy() -> bool:
     """Returns True if the LLM endpoint is reachable and accepting requests."""
     try:
         r = requests.post(
@@ -427,7 +427,7 @@ def index():
         crypto_enabled      = get_crypto_enabled(),
         watchlist_only      = get_watchlist_only(),
         crypto_symbols      = get_crypto_symbols(),
-        ollama_ok           = ollama_healthy(),
+        llm_ok              = llm_healthy(),
         now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
         market_open         = True,  # crypto markets are 24/7
     )
@@ -648,7 +648,7 @@ def stocks_page():
         max_option_premium  = get_max_option_premium(),
         stocks_enabled      = get_stocks_enabled(),
         watchlist_only      = get_watchlist_only(),
-        ollama_ok           = ollama_healthy(),
+        llm_ok              = llm_healthy(),
         now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
         market_open         = True,  # crypto markets are 24/7
     )
@@ -1003,7 +1003,7 @@ def api_stats():
                     "daily_loss_limit": get_daily_loss_limit(),
                     "stocks_enabled":   get_stocks_enabled(),
                     "crypto_enabled":   get_crypto_enabled(),
-                    "ollama_ok":        ollama_healthy(),
+                    "llm_ok":           llm_healthy(),
                     "ingest_running":   ingest_st.get("running")})
 
 
@@ -1639,7 +1639,7 @@ def build_chat_context() -> str:
         f"Crypto: {'ENABLED' if get_crypto_enabled() else 'DISABLED'}\n"
         f"News digest last run: {get_setting('news_digest_last_run', 'Never')}\n"
         f"Ingest: {'running' if ingest_st.get('running') else 'stopped'} | "
-        f"LLM (Gemini): {'ok' if ollama_healthy() else 'OFFLINE'}\n"
+        f"LLM (Gemini): {'ok' if llm_healthy() else 'OFFLINE'}\n"
         f"Today — P&L: ${stats['pnl']} | "
         f"Trades: {stats['trades_today']} (B={stats['buys']} S={stats['sells']}) | "
         f"Signals: {stats['signals_today']}\n"

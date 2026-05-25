@@ -626,7 +626,8 @@
   </div>
 
   <div class="badges">
-    <span class="badge {{ 'green' if ollama_ok else 'red' }}" id="badge-llm">LLM {{ '✓' if ollama_ok else '✗' }}</span>
+    <span class="badge {{ 'green' if llm_ok else 'red' }}" id="badge-llm">LLM {{ '✓' if llm_ok else '✗' }}</span>
+    <span class="badge {{ 'green' if market_open else 'yellow' }}" id="badge-market">Market {{ 'Open' if market_open else 'Closed' }}</span>
     <span class="badge blue" id="badge-mode">{{ trade_mode.upper() }}</span>
     <span class="badge {{ 'green' if ingest_running == True else ('red' if ingest_running == False else 'yellow') }}" id="badge-ingest">
       Ingest {{ '▶' if ingest_running == True else ('■' if ingest_running == False else '?') }}
