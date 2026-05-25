@@ -39,9 +39,9 @@ def get_client() -> TradingClient:
 def daily_pnl() -> float:
     """Net P&L from today's trades (negative = loss)."""
     session = Session()
-    today = date.today().isoformat()
+    today_start = datetime.combine(date.today(), dtime.min)
     trades = (session.query(Trade)
-              .filter(Trade.ts.cast(str).startswith(today),
+              .filter(Trade.ts >= today_start,
                       Trade.status == "filled")
               .all())
     session.close()
