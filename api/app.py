@@ -3,7 +3,7 @@ FuturesFinder5000 — Interactive web dashboard
 Controls: trade on/off toggle, ingest on/off toggle, symbol management, capital allocation
 Data: live signals, projected/actual trades, daily P&L, pending signals
 """
-import os, sys, json, re, requests, hashlib, functools, threading, math
+import os, sys, json, re, requests, hashlib, functools, threading, math, time
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -19,7 +19,8 @@ from flask import Flask, render_template, jsonify, request, Response, stream_wit
 from sqlalchemy import func, text
 from db.models import (
     init_db, Session, Bar, Signal, Trade, HealthMetric, KnowledgeItem,
-    LLMSession, get_setting, set_setting, AIMessage, write_inbox,
+    LLMSession, ChatMessage, get_setting, set_setting, AIMessage, write_inbox,
+    log_llm_session,
 )
 from ingest.crypto_derivatives import fetch_and_store, latest_for_symbols
 
@@ -68,6 +69,7 @@ def login():
         password = request.form.get("password", "")
         if username == _AUTH_USER and _check_password(password):
             session["logged_in"] = True
+            session["user"] = username
             session.permanent = True
             next_url = request.args.get("next") or "/"
             return redirect(next_url)
@@ -364,7 +366,7 @@ def pending_signals(limit: int = 25) -> list[dict]:
 def recent_trades(limit: int = 50) -> list[dict]:
     session = Session()
     rows = (session.query(Trade)
-            .filter(Trade.status == "filled")
+            .filter(Trade.status.in_(["filled", "submitted", "rejected"]))
             .order_by(Trade.ts.desc())
             .limit(limit).all())
     trades = [{
@@ -389,15 +391,16 @@ def daily_stats() -> dict:
     trades = session.query(Trade).filter(Trade.ts >= start, Trade.ts < end).all()
     sigs   = session.query(Signal).filter(Signal.ts >= start, Signal.ts < end).count()
     session.close()
-    bought = sum(t.price * t.qty for t in trades if t.side == "buy"  and t.status == "filled")
-    sold   = sum(t.price * t.qty for t in trades if t.side == "sell" and t.status == "filled")
+    filled_trades = [t for t in trades if t.status == "filled"]
+    bought = sum(t.price * t.qty for t in filled_trades if t.side == "buy")
+    sold   = sum(t.price * t.qty for t in filled_trades if t.side == "sell")
     pnl    = round(sold - bought, 2)
     return {
         "pnl":           pnl,
         "pnl_class":     "positive" if pnl >= 0 else "negative",
-        "trades_today":  len(trades),
-        "buys":          sum(1 for t in trades if t.side == "buy"),
-        "sells":         sum(1 for t in trades if t.side == "sell"),
+        "trades_today":  len(filled_trades),
+        "buys":          sum(1 for t in filled_trades if t.side == "buy"),
+        "sells":         sum(1 for t in filled_trades if t.side == "sell"),
         "signals_today": sigs,
     }
 
@@ -1763,6 +1766,13 @@ def build_chat_context() -> str:
         if d and d.get("mapped") is not False and not d.get("error")
     ) or "  No derivatives feed data yet"
 
+    db_info = db_stats()
+    trade_lines = "\n".join(
+        f"  {t['ts']} {t['symbol']} {str(t['side']).upper()} qty={t['qty']} "
+        f"price=${t['price']} status={t['status']}"
+        for t in recent_trades(8)
+    ) or "  No recent trade records"
+
     return (
         f"Time: {now.strftime('%Y-%m-%d %H:%M ET')} | "
         f"Equities session: {'OPEN' if equities_open else 'CLOSED'} | Crypto market: OPEN 24/7\n"
@@ -1779,6 +1789,10 @@ def build_chat_context() -> str:
         f"Today — P&L: ${stats['pnl']} | "
         f"Trades: {stats['trades_today']} (B={stats['buys']} S={stats['sells']}) | "
         f"Signals: {stats['signals_today']}\n"
+        f"Database: PostgreSQL connected | bars={db_info['bar_count']} | "
+        f"signals={db_info['signal_count']} | trades={db_info['trade_count']} | "
+        f"latest_bar={db_info['latest_bar']} | db_size={db_info['db_size']}\n"
+        f"Recent trade records:\n{trade_lines}\n"
         f"Open positions ({len(positions)}):\n{pos_lines if pos_lines else '  No open positions'}\n"
         f"Coinbase current holdings:\n{cb_lines}\n"
         "If older signal reasoning says Coinbase is unconfigured, treat it as stale and defer to the live Coinbase SDK status above.\n"
@@ -1820,10 +1834,44 @@ HOW TO RESPOND:
 - Be direct and data-driven. Always cite actual values from the live snapshot when answering.
 - Distinguish equities from crypto: if equities are closed, say "equities are closed" but crypto remains tradable 24/7.
 - If crypto data/signals are missing, say the crypto data is missing/stale; do not claim crypto cannot trade due to market hours.
-- If a value is not in the snapshot, say so — never fabricate data.
-- Do not describe your own infrastructure or internal errors — you have no visibility into those.
+- If a value is not in the snapshot or persistent memory, say so — never fabricate data.
+- You are given live database-backed context in every turn; use it instead of claiming you cannot access the database.
 - When asked about performance, reference actual P&L and trade history from the snapshot.
-- When asked for a recommendation, give one — you are a trading agent, not a disclaimer machine."""
+- When asked for a recommendation, give one — you are a trading agent, not a disclaimer machine.
+- You DO have access to database-backed live context through the snapshot and persistent chat memory. Never claim you cannot inspect the database, terminal, or server; instead, use the supplied database context and say when a specific value is not present in it."""
+
+
+def _chat_session_key() -> str:
+    return str(session.get("user") or _AUTH_USER or "dashboard")[:80]
+
+
+def recent_chat_messages(session_key: str, limit: int = 24) -> list[dict]:
+    db = Session()
+    try:
+        rows = (db.query(ChatMessage)
+                .filter(ChatMessage.session_key == session_key,
+                        ChatMessage.service == "chat",
+                        ChatMessage.role.in_(["user", "assistant"]))
+                .order_by(ChatMessage.ts.desc())
+                .limit(limit)
+                .all())
+        return [{"role": r.role, "content": r.content} for r in reversed(rows)]
+    finally:
+        db.close()
+
+
+def save_chat_message(session_key: str, role: str, content: str):
+    db = Session()
+    try:
+        db.add(ChatMessage(
+            session_key=session_key[:80],
+            service="chat",
+            role=role[:10],
+            content=content,
+        ))
+        db.commit()
+    finally:
+        db.close()
 
 
 def kb_search(query: str, limit: int = 4) -> list[dict]:
@@ -1890,7 +1938,6 @@ _URL_RE = re.compile(r'https?://\S+')
 def api_chat():
     data     = request.json or {}
     user_msg = data.get("message", "").strip()
-    history  = data.get("history", [])   # [{role, content}, ...]
 
     if not user_msg:
         return jsonify({"error": "No message"}), 400
@@ -1920,13 +1967,34 @@ def api_chat():
     if fetched_content:
         system_content += f"\n\n--- Web page content fetched from {fetched_url} ---\n{fetched_content}\n---"
 
+    chat_key = _chat_session_key()
+    db_history = recent_chat_messages(chat_key)
     messages = (
         [{"role": "system", "content": system_content}]
-        + history[-20:]   # keep last 20 turns to bound context length
+        + db_history
         + [{"role": "user", "content": user_msg}]
     )
 
     def generate():
+        started = time.time()
+        full_response = ""
+        saved = False
+
+        def persist_chat_turn():
+            nonlocal saved
+            if saved or not full_response:
+                return
+            save_chat_message(chat_key, "user", user_msg)
+            save_chat_message(chat_key, "assistant", full_response)
+            log_llm_session(
+                service="chat",
+                model=LLM_MODEL,
+                prompt=json.dumps(messages[-8:], default=str),
+                response=full_response,
+                latency_ms=int((time.time() - started) * 1000),
+            )
+            saved = True
+
         try:
             r = requests.post(
                 LLM_API_URL,
@@ -1945,15 +2013,18 @@ def api_chat():
                     continue
                 chunk = decoded[6:]
                 if chunk.strip() == "[DONE]":
+                    persist_chat_turn()
                     yield "data: [DONE]\n\n"
                     return
                 try:
                     obj   = json.loads(chunk)
                     delta = obj["choices"][0]["delta"].get("content", "")
                     if delta:
+                        full_response += delta
                         yield f"data: {json.dumps({'content': delta})}\n\n"
                 except Exception:
                     pass
+            persist_chat_turn()
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
             yield "data: [DONE]\n\n"

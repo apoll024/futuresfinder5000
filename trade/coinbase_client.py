@@ -128,6 +128,17 @@ def place_market_buy(product_id: str, quote_usd: float) -> dict:
     })
 
 
+def preview_market_buy(product_id: str, quote_usd: float) -> dict:
+    """Preview a crypto buy so sizing can account for Coinbase fees."""
+    return _req("POST", "/api/v3/brokerage/orders/preview", {
+        "product_id": product_id,
+        "side": "BUY",
+        "order_configuration": {
+            "market_market_ioc": {"quote_size": f"{quote_usd:.2f}"},
+        },
+    })
+
+
 def place_market_sell(product_id: str, base_size: float) -> dict:
     """Sell a base-currency amount (e.g. 0.001 BTC). Returns the order response."""
     return _req("POST", "/api/v3/brokerage/orders", {

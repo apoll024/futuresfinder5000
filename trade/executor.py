@@ -28,6 +28,7 @@ MAX_POSITION_USD = float(os.getenv("MAX_POSITION_USD", "500"))
 MAX_DAILY_LOSS   = float(os.getenv("MAX_DAILY_LOSS_USD", "200"))
 MAX_OPEN         = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
 MIN_CONFIDENCE   = float(os.getenv("MIN_SIGNAL_CONFIDENCE", "0.50"))
+COINBASE_BUY_CASH_BUFFER = float(os.getenv("COINBASE_BUY_CASH_BUFFER", "0.97"))
 ET               = ZoneInfo("America/New_York")
 EOD_CLOSE_TIME   = dtime(15, 45)  # force-close all positions at 3:45 PM ET
 
@@ -48,6 +49,59 @@ def daily_pnl() -> float:
     bought = sum(t.price * t.qty for t in trades if t.side == "buy")
     sold   = sum(t.price * t.qty for t in trades if t.side == "sell")
     return sold - bought
+
+
+def _coinbase_order_id(resp: dict) -> str:
+    return (
+        resp.get("order_id")
+        or resp.get("success_response", {}).get("order_id")
+        or resp.get("order", {}).get("order_id")
+        or ""
+    )
+
+
+def _coinbase_error(resp: dict) -> str:
+    err = resp.get("error_response") or resp.get("error") or {}
+    if isinstance(err, dict):
+        parts = [err.get("error"), err.get("message"), err.get("error_details")]
+        return " | ".join(str(p) for p in parts if p)
+    errs = resp.get("errs") or resp.get("errors")
+    if errs:
+        return str(errs)
+    return str(err) if err else "Coinbase did not return an order id"
+
+
+def _float_from_preview(preview: dict, key: str) -> float:
+    raw = preview.get(key, 0)
+    if isinstance(raw, dict):
+        raw = raw.get("value", 0)
+    try:
+        return float(raw or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _coinbase_buy_size(cb_sym: str, available_usd: float, max_usd: float) -> tuple[float, str]:
+    from trade.coinbase_client import preview_market_buy
+
+    buffers = [COINBASE_BUY_CASH_BUFFER, 0.95, 0.90, 0.85]
+    tried = []
+    for buffer in buffers:
+        quote = round(min(max_usd, available_usd * buffer), 2)
+        if quote < 1:
+            continue
+        try:
+            preview = preview_market_buy(cb_sym, quote)
+            errs = preview.get("errs") or preview.get("errors") or []
+            total = _float_from_preview(preview, "order_total")
+            fees = _float_from_preview(preview, "commission_total")
+            required = (total or quote) + fees
+            if not errs and required <= available_usd:
+                return quote, f"preview ok: order=${total or quote:.2f}, fees=${fees:.2f}, required=${required:.2f}"
+            tried.append(f"${quote:.2f}: errs={errs or 'none'}, required=${required:.2f}")
+        except Exception as e:
+            tried.append(f"${quote:.2f}: preview error={e}")
+    return 0.0, "; ".join(tried)
 
 
 def close_all_positions(reason: str = "EOD"):
@@ -405,14 +459,19 @@ def execute_crypto_signal(signal_id: int):
             if sig.action == "buy":
                 # Use min of configured max and actual available USD+USDC balance
                 available_usd  = get_crypto_balance("USD") + get_crypto_balance("USDC")
-                buy_size       = round(min(max_pos_db, available_usd) * 0.99, 2)  # 1% fee buffer
+                buy_size, size_note = _coinbase_buy_size(cb_sym, available_usd, max_pos_db)
                 if buy_size < 1.0:
-                    print(f"  [executor] Insufficient balance (${available_usd:.2f}) — buy skipped")
+                    trade.status = "rejected"
+                    trade.alpaca_id = "insufficient-funds"
+                    print(f"  [executor] Insufficient balance after Coinbase fees (${available_usd:.2f}) — {size_note}")
+                    session.add(trade)
+                    sig.acted_on = True
+                    session.commit()
                     session.close()
                     return
+                print(f"  [executor] Buying ${buy_size:.2f} of {cb_sym} (balance: ${available_usd:.2f}, max: ${max_pos_db:.2f}; {size_note})")
                 resp      = place_market_buy(cb_sym, buy_size)
                 trade.qty = round(buy_size / price, 6) if price > 0 else 0
-                print(f"  [executor] Buying ${buy_size:.2f} of {cb_sym} (balance: ${available_usd:.2f}, max: ${max_pos_db:.2f})")
             else:
                 base = sig.symbol.split("/")[0]
                 qty  = get_crypto_balance(base)
@@ -422,12 +481,16 @@ def execute_crypto_signal(signal_id: int):
                     return
                 resp      = place_market_sell(cb_sym, qty)
                 trade.qty = qty
-            # Coinbase wraps the order ID under success_response in some SDK versions
-            order_id       = (resp.get("order_id")
-                              or resp.get("success_response", {}).get("order_id", "?"))
-            trade.alpaca_id = str(order_id)[:50]
-            trade.status    = "submitted"
-            print(f"  [executor] Coinbase {sig.action.upper()} {cb_sym} → {order_id}")
+            order_id = _coinbase_order_id(resp)
+            if resp.get("success") is False or resp.get("error_response") or not order_id:
+                reason = _coinbase_error(resp)
+                trade.alpaca_id = str(order_id or reason)[:50]
+                trade.status = "rejected"
+                print(f"  [executor] Coinbase {sig.action.upper()} {cb_sym} rejected: {reason}")
+            else:
+                trade.alpaca_id = str(order_id)[:50]
+                trade.status    = "submitted"
+                print(f"  [executor] Coinbase {sig.action.upper()} {cb_sym} → {order_id}")
         else:
             # ── Alpaca fallback ─────────────────────────────────────────────
             client = get_client()
