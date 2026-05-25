@@ -605,7 +605,7 @@ def run_analysis(symbol: str):
     if get_setting("crypto_enabled", "true") != "true":
         return
 
-    df_1m = fetch_bars(symbol, hours=24)
+    df_1m = fetch_bars(symbol, hours=56)  # 56h ensures 1h EMA-50 (needs 50+ 1h bars)
     if len(df_1m) < 26:
         print(f"  [{symbol}] Not enough bars yet ({len(df_1m)})")
         return

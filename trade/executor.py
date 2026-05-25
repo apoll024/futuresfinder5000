@@ -347,7 +347,8 @@ def execute_crypto_signal(signal_id: int):
         session.close()
         return
 
-    mode = TRADE_MODE
+    # Read mode from DB (live/suggest) — falls back to env var if not set
+    mode = get_setting("trade_mode", TRADE_MODE)
     print(f"  [executor] Crypto Mode={mode}  {sig.symbol} {sig.action.upper()}  conf={sig.confidence:.2f}")
 
     if sig.confidence < MIN_CONFIDENCE:
@@ -394,13 +395,24 @@ def execute_crypto_signal(signal_id: int):
         place_market_buy, place_market_sell, get_crypto_balance,
     )
 
+    # Determine buy size: respect DB max_position_usd AND available balance
+    max_pos_db = float(get_setting("max_position_usd", str(MAX_POSITION_USD)))
+
     try:
         if cb_ok():
             # ── Coinbase execution ──────────────────────────────────────────
             cb_sym = coinbase_symbol(sig.symbol)
             if sig.action == "buy":
-                resp     = place_market_buy(cb_sym, MAX_POSITION_USD)
-                trade.qty = round(MAX_POSITION_USD / price, 6) if price > 0 else 0
+                # Use min of configured max and actual available USD+USDC balance
+                available_usd  = get_crypto_balance("USD") + get_crypto_balance("USDC")
+                buy_size       = round(min(max_pos_db, available_usd) * 0.99, 2)  # 1% fee buffer
+                if buy_size < 1.0:
+                    print(f"  [executor] Insufficient balance (${available_usd:.2f}) — buy skipped")
+                    session.close()
+                    return
+                resp      = place_market_buy(cb_sym, buy_size)
+                trade.qty = round(buy_size / price, 6) if price > 0 else 0
+                print(f"  [executor] Buying ${buy_size:.2f} of {cb_sym} (balance: ${available_usd:.2f}, max: ${max_pos_db:.2f})")
             else:
                 base = sig.symbol.split("/")[0]
                 qty  = get_crypto_balance(base)

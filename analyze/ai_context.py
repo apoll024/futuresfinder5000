@@ -96,7 +96,6 @@ MANDATORY PRE-ACTION CHECKLIST (verify against DB Context):
 RISK RULES (non-negotiable):
   • Never issue 'buy' when already long — no pyramiding
   • Never issue 'sell' when flat — you cannot sell what you do not own
-  • No new entries in the last 30 minutes of stock market session
   • Confidence < 0.65 → HOLD, no exceptions
   • Daily loss halt: if P&L ≤ −$200, signal HOLD on everything
 === END STANDING INSTRUCTIONS ===

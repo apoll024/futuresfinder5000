@@ -11,6 +11,7 @@ Resilience:
 """
 import os, sys, time, signal, threading
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -105,6 +106,87 @@ def _get_active_symbols() -> list:
         return ["BTC/USD", "ETH/USD", "SOL/USD"]
 
 
+def backfill_bars(symbols: list, min_hours: int = 30):
+    """
+    Ensure each symbol has at least min_hours of 1-min bars in the DB.
+    Fetches missing history from Alpaca's crypto historical REST API.
+    This gives compute_indicators() enough data to calculate 1h timeframe indicators.
+    """
+    try:
+        from alpaca.data.historical import CryptoHistoricalDataClient
+        from alpaca.data.requests import CryptoBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        client = CryptoHistoricalDataClient(API_KEY, SECRET_KEY)
+    except Exception as e:
+        print(f"[crypto] Backfill skipped — Alpaca historical client unavailable: {e}")
+        return
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=min_hours)
+
+    for symbol in symbols:
+        try:
+            db = Session()
+            count = db.query(Bar).filter(Bar.symbol == symbol, Bar.ts >= cutoff).count()
+            oldest = db.query(Bar.ts).filter(Bar.symbol == symbol).order_by(Bar.ts.asc()).first()
+            db.close()
+
+            if count >= min_hours * 55:  # ≥55 bars/hour on average = enough data
+                print(f"[crypto] {symbol}: {count} bars in window — no backfill needed")
+                continue
+
+            fetch_start = cutoff
+            if oldest and oldest[0] and oldest[0].replace(tzinfo=timezone.utc) < cutoff:
+                fetch_start = cutoff  # fill only missing window
+            else:
+                fetch_start = cutoff
+
+            print(f"[crypto] {symbol}: only {count} bars — backfilling from Alpaca since {fetch_start.strftime('%Y-%m-%dT%H:%M')}Z")
+            req = CryptoBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=TimeFrame.Minute,
+                start=fetch_start,
+                end=datetime.now(timezone.utc) - timedelta(minutes=2),
+            )
+            bars = client.get_crypto_bars(req)
+            df = bars.df
+
+            if df is None or df.empty:
+                print(f"[crypto] {symbol}: no historical bars returned")
+                continue
+
+            # Reset multi-index if present (symbol, timestamp) → just timestamp
+            if isinstance(df.index, type(df.index)) and df.index.nlevels > 1:
+                df = df.reset_index(level=0, drop=True)
+
+            written = 0
+            db = Session()
+            try:
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+                from sqlalchemy import inspect as sa_inspect
+                rows = []
+                for ts, row in df.iterrows():
+                    ts_utc = ts.to_pydatetime().replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.to_pydatetime()
+                    rows.append({
+                        "symbol": symbol, "ts": ts_utc,
+                        "open":   float(row["open"]),  "high": float(row["high"]),
+                        "low":    float(row["low"]),   "close": float(row["close"]),
+                        "volume": float(row.get("volume", 0)),
+                    })
+                if rows:
+                    stmt = pg_insert(Bar).values(rows).on_conflict_do_nothing(
+                        index_elements=["symbol", "ts"]
+                    )
+                    result = db.execute(stmt)
+                    written = result.rowcount if result.rowcount >= 0 else len(rows)
+                    db.commit()
+                print(f"[crypto] {symbol}: backfilled {written} bars ({len(rows)} fetched)")
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"[crypto] Backfill error for {symbol}: {e}")
+
+
 def run_stream():
     global _stream_ref, _known_syms
 
@@ -141,6 +223,13 @@ def _symbol_watcher():
 
 def main():
     init_db()
+
+    # Backfill historical bars so 1h indicators have enough data on startup
+    try:
+        symbols = _get_active_symbols()
+        backfill_bars(symbols, min_hours=55)  # 55h gives 55+ 1h bars for EMA-50
+    except Exception as e:
+        print(f"[crypto] Startup backfill failed (non-fatal): {e}")
 
     backoff     = 5
     max_backoff = 120
