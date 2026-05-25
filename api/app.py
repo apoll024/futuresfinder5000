@@ -993,6 +993,7 @@ def api_activity():
     return jsonify({"events": events, "containers": containers})
 
 
+@app.route("/api/stats")
 @login_required
 def api_stats():
     ingest_st = get_ingest_status()
