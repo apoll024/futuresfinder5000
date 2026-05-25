@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -370,7 +370,6 @@
     .ai-rec:last-child { border-bottom: none; }
     .ai-rec-sym    { font-weight: 800; min-width: 48px; font-size: 11px; }
     .ai-rec-action { min-width: 78px; font-weight: 800; font-size: 10px; text-transform: uppercase; }
-    .ai-rec-action.liquidate { color: var(--red2); }
     .ai-rec-action.hold      { color: var(--green2); }
     .ai-rec-urgency          { min-width: 50px; font-size: 9px; }
     .ai-rec-urgency.high     { color: var(--red2); }
@@ -848,36 +847,6 @@
         <div id="readiness-grid" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
       </div>
     </div>
-    <!-- ── Current Holdings ── -->
-    <div class="sec-hdr">
-      <span class="dot green"></span>
-      💼 Holdings
-      <span class="badge purple" id="holdings-count-badge" style="margin-left:4px;">0 positions</span>
-      <div style="margin-left:auto;display:flex;gap:6px;">
-        <button class="btn btn-ai"    id="btn-ai-review" onclick="aiReviewPositions()">🤖 AI Review</button>
-        <button class="btn btn-danger" onclick="liquidateAll()">⚡ Liquidate All</button>
-      </div>
-    </div>
-    <div class="section" style="padding-top:10px;">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-        <table id="holdings-table">
-          <thead>
-            <tr><th>Symbol</th><th>Qty</th><th>Avg Entry</th><th>Current</th><th>Unrealized P&amp;L</th><th>Change %</th><th>Mkt Value</th><th></th></tr>
-          </thead>
-          <tbody id="holdings-body">
-            <tr><td colspan="8" class="no-data">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="ai-review-panel" id="ai-review-panel">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px;">
-          <span style="font-size:11px;font-weight:800;color:var(--purple2);">🤖 AI Position Review</span>
-          <button class="btn-remove" onclick="closeAiPanel()">✕ Close</button>
-        </div>
-        <div id="ai-review-summary" style="font-size:11px;color:var(--text);margin-bottom:9px;line-height:1.5;"></div>
-        <div id="ai-review-recs"></div>
-      </div>
-    </div>
 
     <!-- ── Signal History ── -->
     <div class="sec-hdr clickable" onclick="toggleSection('sig-hist-body','sig-hist-chevron')">
@@ -1302,7 +1271,7 @@ async function runAdvisor() {
   out.textContent = '⏳ Analyzing recent trades, pending signals, and watchlist…';
   meta.textContent = 'Running…';
   try {
-    const resp = await fetch('/api/ai-advisor');
+    const resp = await fetch('/api/ai-advisor', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
     if (!resp.ok) { out.textContent = '⚠ Analysis failed: ' + resp.status; return; }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -1319,7 +1288,7 @@ async function runAdvisor() {
           if (tok === '[DONE]') return;
           try {
             const j = JSON.parse(tok);
-            if (j.text) { full += j.text; out.textContent = full; out.scrollTop = out.scrollHeight; }
+            if (j.content) { full += j.content; out.textContent = full; out.scrollTop = out.scrollHeight; }
             if (j.error) { out.textContent = '⚠ ' + j.error; }
           } catch {}
         }
@@ -1679,111 +1648,10 @@ function updateCbSidebar() {
 // ════════════════════════════════════════════════════════════════════════════
 // HOLDINGS
 // ════════════════════════════════════════════════════════════════════════════
-async function loadPositions() {
-  try {
-    const data  = await fetch('/api/positions').then(r=>r.json());
-    const badge = document.getElementById('holdings-count-badge');
-    const tbody = document.getElementById('holdings-body');
-    if (!Array.isArray(data) || !data.length) {
-      badge.textContent = '0 positions';
-      tbody.innerHTML   = '<tr><td colspan="8" class="no-data">No open positions</td></tr>';
-      return;
-    }
-    badge.textContent = data.length + ' position' + (data.length !== 1 ? 's' : '');
-    tbody.innerHTML = data.map(p => {
-      const pnlPos  = p.unrealized_pnl >= 0;
-      const pctPos  = p.pct_change >= 0;
-      const occ = parseOccSymbol(p.symbol);
-      const dispSym = occ
-        ? `<strong>${occ.underlying}</strong><span style="font-size:9px;color:var(--muted);display:block;">${occ.type} $${occ.strike} exp ${occ.expiry}</span>`
-        : `<strong>${p.symbol}</strong>`;
-      return `<tr id="holding-${p.symbol}">
-        <td>${dispSym}</td><td>${p.qty}</td>
-        <td>$${p.avg_entry}</td><td>$${p.current_price}</td>
-        <td class="${pnlPos?'holding-pnl-pos':'holding-pnl-neg'}">${pnlPos?'+':''}$${p.unrealized_pnl}</td>
-        <td class="${pctPos?'holding-pnl-pos':'holding-pnl-neg'}">${pctPos?'+':''}${p.pct_change}%</td>
-        <td>$${p.market_value.toLocaleString()}</td>
-        <td><button class="btn btn-danger" style="padding:2px 8px;font-size:10px;" onclick="liquidatePosition('${p.symbol}')">Liquidate</button></td>
-      </tr>`;
-    }).join('');
-  } catch(e) { console.warn('Holdings error', e); }
-}
 
-async function liquidatePosition(sym) {
-  if (!confirm(`Liquidate ${sym}?`)) return;
-  const data = await fetch('/api/positions/liquidate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})}).then(r=>r.json());
-  if (data.error) { toast('Error: ' + data.error, false); return; }
-  toast(`${sym} liquidated (${data.status})`);
-  loadPositions(); refreshData();
-}
 
-async function liquidateAll() {
-  const cnt = parseInt(document.getElementById('holdings-count-badge').textContent) || 0;
-  if (!cnt) { toast('No open positions', false); return; }
-  if (!confirm(`Liquidate ALL ${cnt} position(s)?`)) return;
-  const data = await fetch('/api/positions/liquidate-all',{method:'POST'}).then(r=>r.json());
-  if (data.error) { toast('Error: ' + data.error, false); return; }
-  toast(`All ${data.closed||cnt} positions liquidated`);
-  loadPositions(); refreshData();
-}
 
-async function aiReviewPositions() {
-  const panel   = document.getElementById('ai-review-panel');
-  const summary = document.getElementById('ai-review-summary');
-  const recs    = document.getElementById('ai-review-recs');
-  const btn     = document.getElementById('btn-ai-review');
-  panel.classList.add('visible');
-  summary.textContent = '⏳ Analyzing positions…';
-  recs.innerHTML = '';
-  btn.disabled   = true;
-  btn.textContent = '⏳ Analyzing…';
-  let fullText = '';
-  try {
-    const res = await fetch('/api/positions/ai-review', {method:'POST'});
-    if (!res.ok) { summary.textContent = '⚠ ' + ((await res.json()).error || 'Error'); return; }
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      for (const line of decoder.decode(value).split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const chunk = line.slice(6);
-        if (chunk.trim() === '[DONE]') break;
-        try { const obj = JSON.parse(chunk); if (obj.content) fullText += obj.content; } catch(e) {}
-      }
-    }
-  } catch(e) { summary.textContent = '⚠ ' + e.message; return; }
-  finally { btn.disabled = false; btn.textContent = '🤖 AI Review'; }
-  try {
-    const parsed = JSON.parse(fullText.slice(fullText.indexOf('{'), fullText.lastIndexOf('}')+1));
-    summary.textContent = parsed.summary || '';
-    if (parsed.positions && parsed.positions.length) {
-      recs.innerHTML = parsed.positions.map(p => {
-        const isLiq = p.action === 'liquidate';
-        return `<div class="ai-rec">
-          <span class="ai-rec-sym">${escHtml(p.symbol)}</span>
-          <span class="ai-rec-action ${escHtml(p.action)}">${isLiq ? '⬇ LIQUIDATE' : '✓ HOLD'}</span>
-          <span class="ai-rec-urgency ${escHtml(p.urgency||'low')}">[${(p.urgency||'low').toUpperCase()}]</span>
-          <span class="ai-rec-reason">${escHtml(p.reasoning||'')}</span>
-          ${isLiq ? `<button class="btn-accept" onclick="liquidatePosition('${escHtml(p.symbol)}')">Accept &amp; Close</button>` : ''}
-        </div>`;
-      }).join('');
-    }
-  } catch(e) { summary.textContent = fullText; }
-}
 
-function closeAiPanel() { document.getElementById('ai-review-panel').classList.remove('visible'); }
-
-// ════════════════════════════════════════════════════════════════════════════
-// CHAT
-// ════════════════════════════════════════════════════════════════════════════
-const _chatHistory = [];
-
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 80) + 'px';
-}
 function chatKeydown(e) { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }
 
 function appendMsg(role, text, streaming=false) {
@@ -1934,7 +1802,6 @@ async function refreshData() {
     if (ft) ft.textContent = 'Last updated: ' + new Date().toLocaleTimeString() + ' · Auto-refresh every 30s';
   } catch(e) { console.warn('Refresh error', e); }
   loadEngineStats();
-  loadPositions();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2067,7 +1934,6 @@ document.addEventListener('DOMContentLoaded', () => {
   loadDbStats();
   loadResources();
   loadKB();
-  loadPositions();
   loadDigestStatus();
   loadActivity();
   loadSignalHistory();

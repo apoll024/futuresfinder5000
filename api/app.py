@@ -1,4 +1,4 @@
-"""
+﻿"""
 FuturesFinder5000 — Interactive web dashboard
 Controls: trade on/off toggle, ingest on/off toggle, symbol management, capital allocation
 Data: live signals, projected/actual trades, daily P&L, pending signals
@@ -741,7 +741,7 @@ def coinbase_readiness():
             result[sym] = {"status": "error", "reason": "Coinbase API not configured"}
         return jsonify({"symbols": result})
     try:
-        usd_balance = get_crypto_balance("USD")
+        usd_balance = get_crypto_balance("USD") + get_crypto_balance("USDC")
         usdc_balance = get_crypto_balance("USDC")
         total_usd = usd_balance + usdc_balance
     except Exception as e:
@@ -838,7 +838,7 @@ def crypto_engine_status():
     usd_balance, cb_error = 0.0, None
     if is_configured():
         try:
-            usd_balance = get_crypto_balance("USD")
+            usd_balance = get_crypto_balance("USD") + get_crypto_balance("USDC")
         except Exception as e:
             cb_error = str(e)[:100]
 
