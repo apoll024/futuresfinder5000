@@ -198,6 +198,7 @@
     .btn:hover { filter: brightness(1.2); }
     .btn-add    { background: rgba(16,185,129,.08);  color: var(--green2);  border-color: rgba(16,185,129,.3); }
     .btn-save   { background: var(--pur-dim);        color: var(--purple3); border-color: rgba(139,92,246,.4); }
+    .btn-ghost  { background: transparent;           color: var(--purple3); border-color: rgba(139,92,246,.3); }
     .btn-danger { background: rgba(239,68,68,.08);   color: var(--red2);    border: 1px solid rgba(239,68,68,.3); }
     .btn-ai     { background: var(--pur-dim);        color: var(--purple3); border: 1px solid rgba(139,92,246,.4); }
     .btn-remove { background: transparent; color: var(--muted); border: none; cursor: pointer; padding: 2px 4px; font-size: 11px; }
@@ -860,6 +861,21 @@
       <div>
         <div style="font-size:10px;font-weight:800;color:var(--purple2);margin-bottom:6px;letter-spacing:.5px;">TRADE READINESS</div>
         <div id="readiness-grid" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+      </div>
+
+      <div style="margin-top:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <div style="font-size:10px;font-weight:800;color:var(--purple2);letter-spacing:.5px;">CURRENT COINBASE HOLDINGS</div>
+          <button class="btn btn-ghost" onclick="loadCoinbaseData(true)">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Asset</th><th>Balance</th><th>USD Value</th><th>Status</th></tr>
+          </thead>
+          <tbody id="cb-holdings-body">
+            <tr><td colspan="4" class="no-data">Loading Coinbase holdings…</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -1564,24 +1580,21 @@ async function loadCbHoldings(force=false) {
     const tbody = document.getElementById('cb-holdings-body');
 
     if (!data.configured) {
-      badge.textContent = '✗ Not Configured';
-      badge.className = 'badge red';
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted);font-size:11px;">
+      if (badge) { badge.textContent = '✗ Not Configured'; badge.className = 'badge red'; }
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--muted);font-size:11px;">
         Set <strong>COINBASE_API_KEY_NAME</strong> and <strong>COINBASE_API_PRIVATE_KEY</strong><br>in your .env file to connect Coinbase.
       </td></tr>`;
       _cbHoldings = [];
       return;
     }
     if (data.error) {
-      badge.textContent = '⚠ API Error';
-      badge.className = 'badge yellow';
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--red2);font-size:10px;">${escHtml(data.error)}</td></tr>`;
+      if (badge) { badge.textContent = '⚠ API Error'; badge.className = 'badge yellow'; }
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--red2);font-size:10px;">${escHtml(data.error)}</td></tr>`;
       return;
     }
 
     _cbHoldings = data.balances || [];
-    badge.textContent = '● Connected';
-    badge.className = 'badge green';
+    if (badge) { badge.textContent = '● Connected'; badge.className = 'badge green'; }
 
     let totalUsd = 0;
     _cbHoldings.forEach(b => { if (b.usd_value) totalUsd += b.usd_value; });
@@ -1589,11 +1602,11 @@ async function loadCbHoldings(force=false) {
     if (totEl) totEl.textContent = 'Portfolio: ' + fmt$(totalUsd);
 
     if (!_cbHoldings.length) {
-      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--muted);">No holdings yet — deposit funds via Coinbase app</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--muted);">No holdings yet — deposit funds via Coinbase app</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = _cbHoldings.map(b => {
+    if (tbody) tbody.innerHTML = _cbHoldings.map(b => {
       const usdVal = b.usd_value != null ? fmt$(b.usd_value) : '—';
       const isCash = b.currency === 'USD' || b.currency === 'USDC' || b.currency === 'USDT';
       const statusHtml = isCash
@@ -1608,8 +1621,10 @@ async function loadCbHoldings(force=false) {
     }).join('');
   } catch(e) {
     console.warn('CB holdings error', e);
-    document.getElementById('cb-status-badge').textContent = '✗ Error';
-    document.getElementById('cb-status-badge').className = 'badge red';
+    const badge = document.getElementById('cb-status-badge');
+    if (badge) { badge.textContent = '✗ Error'; badge.className = 'badge red'; }
+    const tbody = document.getElementById('cb-holdings-body');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--red2);font-size:10px;">${escHtml(e.message || String(e))}</td></tr>`;
   }
 }
 
