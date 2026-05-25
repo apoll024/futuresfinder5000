@@ -17,7 +17,7 @@ except ImportError:
 
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context, session, redirect, url_for
 from sqlalchemy import func, text
-from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, KnowledgeItem, get_setting, set_setting
+from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, KnowledgeItem, LLMSession, get_setting, set_setting
 
 app           = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "ff5k-change-me-in-prod-32bytes!!")
@@ -295,7 +295,10 @@ def pending_signals(limit: int = 25) -> list[dict]:
 
 def recent_trades(limit: int = 50) -> list[dict]:
     session = Session()
-    rows = (session.query(Trade).order_by(Trade.ts.desc()).limit(limit).all())
+    rows = (session.query(Trade)
+            .filter(Trade.status == "filled")
+            .order_by(Trade.ts.desc())
+            .limit(limit).all())
     trades = [{
         "id":     t.id,
         "symbol": t.symbol,
@@ -894,7 +897,8 @@ def update_settings():
 @app.route("/api/signals")
 @login_required
 def api_signals():
-    return jsonify(latest_signals(get_symbols()))
+    all_syms = get_symbols() + get_crypto_symbols()
+    return jsonify(latest_signals(all_syms))
 
 
 @app.route("/api/signals/pending")
@@ -903,14 +907,84 @@ def api_pending_signals():
     return jsonify(pending_signals())
 
 
-@app.route("/api/trades")
+@app.route("/api/signals/history")
+@login_required
+def api_signals_history():
+    """Last 40 signals across all symbols, newest first."""
+    limit = min(int(request.args.get("limit", 40)), 100)
+    db = Session()
+    try:
+        rows = (db.query(Signal)
+                  .order_by(Signal.ts.desc())
+                  .limit(limit).all())
+        result = [{
+            "id":         s.id,
+            "ts":         s.ts.strftime("%Y-%m-%d %H:%M:%S"),
+            "symbol":     s.symbol,
+            "action":     s.action or "hold",
+            "confidence": round(float(s.confidence or 0) * 100),
+            "acted_on":   bool(s.acted_on),
+            "reasoning":  (s.reasoning or "")[:160],
+        } for s in rows]
+    finally:
+        db.close()
+    return jsonify(result)
+
+
 @login_required
 def api_trades():
-    trades = recent_trades()
-    return jsonify([t for t in trades if t.get("mode") != "suggest"])
+    return jsonify(recent_trades())
 
 
-@app.route("/api/stats")
+@app.route("/api/activity")
+@login_required
+def api_activity():
+    """Pulse bar data: recent LLM decisions + container liveness."""
+    db = Session()
+    events = []
+    try:
+        rows = (db.query(LLMSession)
+                  .order_by(LLMSession.ts.desc())
+                  .limit(8).all())
+        for r in rows:
+            snippet = (r.response or "")[:120].replace("\n", " ")
+            events.append({
+                "ts":         r.ts.strftime("%H:%M:%S"),
+                "service":    r.service or "—",
+                "symbol":     r.symbol  or "—",
+                "action":     (r.action or "hold").lower(),
+                "confidence": round(float(r.confidence or 0), 2),
+                "latency_ms": r.latency_ms,
+                "snippet":    snippet,
+            })
+    except Exception:
+        pass
+    finally:
+        db.close()
+
+    # Container liveness via docker SDK (best-effort)
+    services = [
+        {"name": "crypto",   "container": "ff_crypto"},
+        {"name": "ingest",   "container": "ff_ingest"},
+        {"name": "api",      "container": "ff_api"},
+        {"name": "settler",  "container": "ff_settler"},
+        {"name": "watchdog", "container": "ff_watchdog"},
+    ]
+    containers = []
+    client = get_docker_client()
+    for svc in services:
+        status = "unknown"
+        if client:
+            try:
+                c = client.containers.get(svc["container"])
+                status = "up" if c.status == "running" else "down"
+            except Exception:
+                status = "down"
+        containers.append({"name": svc["name"], "status": status})
+
+    return jsonify({"events": events, "containers": containers})
+
+
 @login_required
 def api_stats():
     ingest_st = get_ingest_status()

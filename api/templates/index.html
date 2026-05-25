@@ -207,6 +207,47 @@
     .sec-hdr.clickable:hover { background: var(--surface2); }
     .collapsible.hidden { display: none !important; }
 
+    /* ══ ACTIVITY PULSE BAR ══════════════════════════════════════════════════ */
+    .pulse-bar {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; margin: 8px 16px; padding: 8px 12px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .pulse-bar-header {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 10px; font-weight: 700; letter-spacing: .8px;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .pulse-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+      box-shadow: 0 0 6px var(--green); animation: pulse-blink 2s infinite;
+    }
+    @keyframes pulse-blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .pulse-services { display: flex; gap: 6px; flex-wrap: wrap; }
+    .svc-pill {
+      font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+      border: 1px solid var(--border2); letter-spacing: .5px;
+    }
+    .svc-pill.up   { color: var(--green2); border-color: var(--green); }
+    .svc-pill.down { color: var(--red2);   border-color: var(--red); }
+    .svc-pill.unknown { color: var(--muted); }
+    .pulse-events { display: flex; flex-direction: column; gap: 3px; }
+    .pulse-event {
+      display: grid; grid-template-columns: 58px 54px 72px 44px 1fr;
+      gap: 6px; align-items: center; font-size: 11px;
+      padding: 3px 4px; border-radius: 4px;
+    }
+    .pulse-event:hover { background: var(--surface2); }
+    .pulse-event .pe-ts   { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .pulse-event .pe-svc  { color: var(--purple3); font-size: 10px; }
+    .pulse-event .pe-sym  { font-weight: 700; color: var(--text); }
+    .pulse-event .pe-act  { font-weight: 800; font-size: 10px; padding: 1px 5px; border-radius: 4px; text-align:center; }
+    .pe-act.buy  { background: rgba(16,185,129,.15); color: var(--green2); }
+    .pe-act.sell { background: rgba(239,68,68,.15);  color: var(--red2); }
+    .pe-act.hold { background: rgba(99,99,138,.15);  color: var(--muted); }
+    .pulse-event .pe-snip { color: var(--muted); font-size: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .pulse-empty { font-size: 11px; color: var(--muted); padding: 4px; }
+
     /* ══ SIGNAL CARDS ════════════════════════════════════════════════════════ */
     .signals-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
@@ -742,23 +783,6 @@
     </div>
     <div class="section">
       <div style="margin-bottom:12px;">
-        <div style="font-size:10px;font-weight:800;color:var(--purple2);margin-bottom:6px;letter-spacing:.5px;">ACCOUNT HOLDINGS</div>
-        <table id="cb-holdings-table" style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead>
-            <tr style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.5px;">
-              <th style="text-align:left;padding:4px 6px;">Currency</th>
-              <th style="text-align:right;padding:4px 6px;">Balance</th>
-              <th style="text-align:right;padding:4px 6px;">USD Value</th>
-              <th style="text-align:right;padding:4px 6px;">Status</th>
-            </tr>
-          </thead>
-          <tbody id="cb-holdings-body">
-            <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:12px;">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div style="margin-bottom:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <div style="font-size:10px;font-weight:800;color:var(--purple2);letter-spacing:.5px;">PER-COIN TRADE LIMITS</div>
           <button class="btn btn-save" onclick="saveCoinLimits()">Save Limits</button>
@@ -766,59 +790,9 @@
         <div id="coin-limits-grid" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
       </div>
 
-      <div style="margin-bottom:12px;">
+      <div>
         <div style="font-size:10px;font-weight:800;color:var(--purple2);margin-bottom:6px;letter-spacing:.5px;">TRADE READINESS</div>
         <div id="readiness-grid" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
-      </div>
-
-      <div class="sec-hdr clickable" onclick="toggleSection('fund-guide-body','fund-guide-chev')" style="border-radius:6px;margin-bottom:4px;">
-        <span>📥 How to Fund Your Account</span>
-        <span class="chevron" id="fund-guide-chev">▶</span>
-      </div>
-      <div id="fund-guide-body" class="collapsible hidden">
-        <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;line-height:1.7;color:var(--text);">
-          <div style="font-weight:800;color:var(--purple2);margin-bottom:8px;">To fund the trading bot:</div>
-          <ol style="padding-left:18px;display:flex;flex-direction:column;gap:5px;">
-            <li>Open the <strong>Coinbase app</strong> or visit <a href="https://coinbase.com" target="_blank">coinbase.com</a></li>
-            <li>Go to <strong>Portfolio → Add Funds</strong></li>
-            <li>Connect your bank account or debit card</li>
-            <li>Purchase <strong>USDC</strong> (recommended — no volatility) or deposit USD directly</li>
-            <li>Funds appear as <strong>USD/USDC balance</strong> in your Coinbase account within minutes</li>
-            <li>The bot uses USD balance to <strong>buy</strong> crypto, and uses your coin balance when <strong>selling</strong></li>
-          </ol>
-          <div style="margin-top:10px;padding:8px;background:var(--surface2);border-radius:5px;border:1px solid var(--border2);font-size:10px;color:var(--muted);">
-            💡 <strong>Tip:</strong> Keep a USD buffer equal to the sum of all your per-coin limits.
-            Example: BTC limit $200 + ETH limit $150 + SOL limit $100 = keep <strong>$450+ USD</strong> in Coinbase.
-          </div>
-          <div style="margin-top:8px;font-size:10px;color:var(--muted);">
-            ⚠ The API <strong>cannot</strong> initiate bank transfers or charge your debit card — funding must be done manually through the Coinbase app/website.
-          </div>
-        </div>
-      </div>
-
-      <div class="sec-hdr clickable" onclick="toggleSection('convert-guide-body','convert-guide-chev')" style="border-radius:6px;">
-        <span>🔄 Coin Conversion & What to Deposit</span>
-        <span class="chevron" id="convert-guide-chev">▶</span>
-      </div>
-      <div id="convert-guide-body" class="collapsible hidden">
-        <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:11px;line-height:1.7;color:var(--text);">
-          <div style="font-weight:800;color:var(--purple2);margin-bottom:8px;">How the bot trades altcoins:</div>
-          <ul style="padding-left:18px;display:flex;flex-direction:column;gap:4px;">
-            <li><strong>BUY signals:</strong> Uses your USD balance to buy the coin (e.g., USD → BTC)</li>
-            <li><strong>SELL signals:</strong> Sells your coin balance back to USD (e.g., BTC → USD)</li>
-            <li>All pairs trade against USD — the bot does not do coin-to-coin swaps</li>
-          </ul>
-          <div style="margin-top:10px;font-weight:800;color:var(--purple2);margin-bottom:6px;">To trade a new altcoin:</div>
-          <ol style="padding-left:18px;display:flex;flex-direction:column;gap:4px;">
-            <li>Add the pair above (e.g., <code>AVAX/USD</code>)</li>
-            <li>Make sure you have <strong>USD balance</strong> ≥ the coin limit for buy signals</li>
-            <li>For sell signals, you need the coin itself — buy it via Coinbase app first if needed</li>
-            <li>Use Coinbase app to convert between coins if you hold, e.g., ETH and want to hold BTC instead</li>
-          </ol>
-          <div style="margin-top:8px;padding:8px;background:var(--surface2);border-radius:5px;border:1px solid var(--border2);font-size:10px;color:var(--muted);">
-            💡 <strong>Supported on Coinbase:</strong> BTC, ETH, SOL, AVAX, MATIC, DOT, ADA, LINK, UNI, DOGE, SHIB, LTC, XRP, ATOM, NEAR, APT — and most other major pairs
-          </div>
-        </div>
       </div>
     </div>
     <!-- ── Current Holdings ── -->
@@ -852,6 +826,41 @@
       </div>
     </div>
 
+    <!-- ── Signal History ── -->
+    <div class="sec-hdr clickable" onclick="toggleSection('sig-hist-body','sig-hist-chevron')">
+      <span class="dot purple"></span>
+      📡 Signal History
+      <span class="count" id="sig-hist-count">—</span>
+      <span class="chevron" id="sig-hist-chevron">▼</span>
+    </div>
+    <div id="sig-hist-body" class="collapsible">
+      <div class="section" style="padding-top:10px;">
+        <table id="sig-hist-table">
+          <thead>
+            <tr><th>Time</th><th>Symbol</th><th>Action</th><th>Conf</th><th>Acted</th><th>Reasoning</th></tr>
+          </thead>
+          <tbody id="sig-hist-body-inner">
+            <tr><td colspan="6" class="no-data">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Activity Pulse Bar ── -->
+    <div class="pulse-bar">
+      <div class="pulse-bar-header">
+        <span class="pulse-dot"></span>
+        AI Activity
+        <span id="pulse-updated" style="margin-left:auto;font-weight:400;font-size:9px;"></span>
+      </div>
+      <div class="pulse-services" id="pulse-services">
+        <span class="svc-pill unknown">loading…</span>
+      </div>
+      <div class="pulse-events" id="pulse-events">
+        <div class="pulse-empty">Waiting for first AI decision…</div>
+      </div>
+    </div>
+
     <!-- ── Trade Log ── -->
     <div class="sec-hdr clickable" onclick="toggleSection('trades-body','trades-chevron')">
       <span class="dot grey"></span>
@@ -862,7 +871,7 @@
       <div class="section" style="padding-top:10px;">
         <table id="trades-table">
           <thead>
-            <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Value</th><th>Mode</th><th>Status</th></tr>
+            <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Value</th><th>Status</th></tr>
           </thead>
           <tbody id="trades-body-inner">
             {% if trades %}
@@ -871,12 +880,11 @@
                 <td>{{ t.ts }}</td><td><strong>{{ t.symbol }}</strong></td>
                 <td class="td-{{ t.side }}">{{ t.side.upper() }}</td>
                 <td>{{ t.qty }}</td><td>${{ t.price }}</td><td>${{ t.value }}</td>
-                <td class="td-{{ t.mode }}">{{ t.mode }}</td>
                 <td class="td-{{ t.status }}">{{ t.status }}</td>
               </tr>
               {% endfor %}
             {% else %}
-              <tr><td colspan="8" class="no-data">No trades yet — running in {{ trade_mode }} mode.</td></tr>
+              <tr><td colspan="7" class="no-data">No executed trades yet.</td></tr>
             {% endif %}
           </tbody>
         </table>
@@ -1837,15 +1845,18 @@ async function refreshData() {
     const [tradesRes] = await Promise.all([fetch('/api/trades')]);
     const trades = await tradesRes.json();
     const tbody = document.getElementById('trades-body-inner');
-    if (tbody && trades.length) {
-      tbody.innerHTML = trades.map(t => `
-        <tr>
-          <td>${t.ts}</td><td><strong>${t.symbol}</strong></td>
-          <td class="td-${t.side}">${t.side.toUpperCase()}</td>
-          <td>${t.qty}</td><td>$${t.price}</td><td>$${t.value}</td>
-          <td class="td-${t.mode}">${t.mode}</td>
-          <td class="td-${t.status}">${t.status}</td>
-        </tr>`).join('');
+    if (tbody) {
+      if (trades.length) {
+        tbody.innerHTML = trades.map(t => `
+          <tr>
+            <td>${t.ts}</td><td><strong>${escHtml(t.symbol)}</strong></td>
+            <td class="td-${t.side}">${t.side.toUpperCase()}</td>
+            <td>${t.qty}</td><td>$${t.price}</td><td>$${t.value}</td>
+            <td class="td-${t.status}">${t.status}</td>
+          </tr>`).join('');
+      } else {
+        tbody.innerHTML = '<tr><td colspan="7" class="no-data">No executed trades yet.</td></tr>';
+      }
     }
     const ft = document.getElementById('footer-ts');
     if (ft) ft.textContent = 'Last updated: ' + new Date().toLocaleTimeString() + ' · Auto-refresh every 30s';
@@ -1857,6 +1868,126 @@ async function refreshData() {
 // ════════════════════════════════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════════════════════════════════
+// ACTIVITY PULSE BAR
+// ════════════════════════════════════════════════════════════════════════════
+async function loadActivity() {
+  try {
+    const data = await fetch('/api/activity').then(r => r.json());
+
+    // Service pills
+    const svcEl = document.getElementById('pulse-services');
+    if (svcEl && data.containers) {
+      svcEl.innerHTML = data.containers.map(c => {
+        const cls = c.status === 'up' ? 'up' : c.status === 'down' ? 'down' : 'unknown';
+        const icon = c.status === 'up' ? '●' : c.status === 'down' ? '✗' : '?';
+        return `<span class="svc-pill ${cls}">${icon} ${c.name}</span>`;
+      }).join('');
+    }
+
+    // Events
+    const evEl = document.getElementById('pulse-events');
+    if (evEl) {
+      if (!data.events || !data.events.length) {
+        evEl.innerHTML = '<div class="pulse-empty">No AI decisions yet — waiting for first signal…</div>';
+      } else {
+        evEl.innerHTML = data.events.map(e => {
+          const actCls = e.action === 'buy' ? 'buy' : e.action === 'sell' ? 'sell' : 'hold';
+          const conf   = e.confidence ? `${Math.round(e.confidence * 100)}%` : '—';
+          return `<div class="pulse-event">
+            <span class="pe-ts">${e.ts}</span>
+            <span class="pe-svc">${escHtml(e.service)}</span>
+            <span class="pe-sym">${escHtml(e.symbol)}</span>
+            <span class="pe-act ${actCls}">${e.action.toUpperCase()}</span>
+            <span class="pe-snip">${escHtml(e.snippet)}</span>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    const upd = document.getElementById('pulse-updated');
+    if (upd) upd.textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch(e) { console.warn('Activity error', e); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SIGNAL HISTORY
+// ════════════════════════════════════════════════════════════════════════════
+async function loadSignalHistory() {
+  try {
+    const rows = await fetch('/api/signals/history').then(r => r.json());
+    const tbody = document.getElementById('sig-hist-body-inner');
+    const count = document.getElementById('sig-hist-count');
+    if (count) count.textContent = rows.length;
+    if (!tbody) return;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="no-data">No signals yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(s => {
+      const actCls = s.action === 'buy' ? 'td-buy' : s.action === 'sell' ? 'td-sell' : '';
+      const acted  = s.acted_on
+        ? '<span style="color:var(--green2);font-weight:700;">✓</span>'
+        : '<span style="color:var(--muted);">—</span>';
+      const isCrypto = s.symbol.includes('/');
+      const symStyle = isCrypto ? 'color:var(--purple3)' : '';
+      return `<tr>
+        <td style="font-size:10px;color:var(--muted);">${s.ts.slice(11)}</td>
+        <td><strong style="${symStyle}">${escHtml(s.symbol)}</strong></td>
+        <td class="${actCls}" style="font-weight:800;">${s.action.toUpperCase()}</td>
+        <td>${s.confidence}%</td>
+        <td style="text-align:center;">${acted}</td>
+        <td style="color:var(--muted);font-size:10px;max-width:260px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escHtml(s.reasoning)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.warn('Signal history error', e); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LIVE SIGNAL CARD REFRESH
+// ════════════════════════════════════════════════════════════════════════════
+async function refreshSignalCards() {
+  try {
+    const signals = await fetch('/api/signals').then(r => r.json());
+    const grid = document.getElementById('crypto-signals-grid');
+    if (!grid) return;
+    const cryptoSigs = signals.filter(s => s.symbol && s.symbol.includes('/'));
+    const countEl = document.getElementById('crypto-sig-count');
+    if (countEl) countEl.textContent = cryptoSigs.length;
+    if (!cryptoSigs.length) return;
+    grid.innerHTML = cryptoSigs.map(s => {
+      const act = (s.action && s.action !== '—') ? s.action : 'none';
+      const ind = s.indicators || {};
+      const conf = s.confidence || 0;
+      return `<div class="sig-card crypto-card ${act}">
+        <div class="sig-hdr">
+          <div class="sig-sym-block">
+            <div class="sig-sym-row">
+              <span class="sig-symbol">${escHtml(s.symbol.split('/')[0])}</span>
+              <span class="crypto-tag">CRYPTO</span>
+            </div>
+            ${s.last_price ? `<div class="sig-price">$${s.last_price}</div>` : ''}
+          </div>
+          <span class="action-badge ${act}">${(s.action||'—').toUpperCase()}</span>
+        </div>
+        <div class="conf-track"><div class="conf-fill ${act}" style="width:${conf}%"></div></div>
+        <div class="indics">
+          ${ind.close    ? `<span class="indic">$${ind.close}</span>` : ''}
+          ${ind.vwap     ? `<span class="indic ${ind.above_vwap?'up':'down'}">VWAP $${ind.vwap}</span>` : ''}
+          ${ind.rsi_14   ? `<span class="indic">RSI ${ind.rsi_14}</span>` : ''}
+          ${ind.bb_pct_b ? `<span class="indic">BB%B ${ind.bb_pct_b}</span>` : ''}
+          ${ind.volume_ratio ? `<span class="indic ${ind.volume_ratio>1.5?'up':''}">Vol ${ind.volume_ratio}x</span>` : ''}
+        </div>
+        <div class="sig-reason">${escHtml((s.reasoning||'').slice(0,180))}</div>
+        <div class="sig-meta">
+          <span>${(s.bar_count||0).toLocaleString()} bars</span>
+          <span>${conf}% conf · ${s.ts}${s.acted_on?' ✓':''}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.warn('Signal card refresh error', e); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   loadMarketData();
   loadCoinbaseData();
@@ -1866,15 +1997,21 @@ document.addEventListener('DOMContentLoaded', () => {
   loadKB();
   loadPositions();
   loadDigestStatus();
+  loadActivity();
+  loadSignalHistory();
+  refreshSignalCards();
 
-  setInterval(refreshData,        30000);
-  setInterval(loadEngineStats,    30000);
-  setInterval(loadCoinbaseData,   30000);
-  setInterval(loadMarketData,    300000);
-  setInterval(loadDbStats,       120000);
-  setInterval(loadResources,      60000);
-  setInterval(loadDigestStatus,   60000);
-  setInterval(loadKB,            120000);
+  setInterval(refreshData,          30000);
+  setInterval(loadEngineStats,      30000);
+  setInterval(loadCoinbaseData,     30000);
+  setInterval(loadActivity,         15000);
+  setInterval(refreshSignalCards,   30000);
+  setInterval(loadSignalHistory,    30000);
+  setInterval(loadMarketData,      300000);
+  setInterval(loadDbStats,         120000);
+  setInterval(loadResources,        60000);
+  setInterval(loadDigestStatus,     60000);
+  setInterval(loadKB,              120000);
 });
 </script>
 </body>
