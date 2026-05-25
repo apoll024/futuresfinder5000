@@ -449,7 +449,7 @@ def _signal_action(ind: dict, fear_greed_val: int) -> str:
     entry_1m = all([
         ind.get("1m_trend_aligned"),
         ind.get("1m_above_vwap"),
-        vol is not None and vol >= 1.2,
+        (vol is None or vol >= 1.0),  # vol=None when Alpaca crypto sends V=0 (data unavailable)
         ind.get("1m_macd_bull"),
         rsi_1m is not None and 35 <= rsi_1m <= 68,
         bb_b is not None and 0.4 <= bb_b <= 0.9,

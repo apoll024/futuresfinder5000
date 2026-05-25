@@ -407,7 +407,7 @@ def index():
     ingest_st  = get_ingest_status()
     now        = datetime.now(ET)
     return render_template("index.html",
-        signals             = latest_signals(symbols),
+        signals             = latest_signals(symbols + get_crypto_symbols()),
         trades              = recent_trades(),
         pending             = pending_signals(),
         stats               = daily_stats(),
@@ -425,7 +425,7 @@ def index():
         crypto_symbols      = get_crypto_symbols(),
         ollama_ok           = ollama_healthy(),
         now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
-        market_open         = "09:45" <= now.strftime("%H:%M") <= "15:45",
+        market_open         = True,  # crypto markets are 24/7
     )
 
 
@@ -646,7 +646,7 @@ def stocks_page():
         watchlist_only      = get_watchlist_only(),
         ollama_ok           = ollama_healthy(),
         now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
-        market_open         = "09:45" <= now.strftime("%H:%M") <= "15:45",
+        market_open         = True,  # crypto markets are 24/7
     )
 
 
