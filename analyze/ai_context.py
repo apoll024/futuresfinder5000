@@ -306,7 +306,7 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
                             hours=6.0,
                         )
                 else:
-                    lines.append("\nAVAILABLE CAPITAL: (unavailable — Coinbase SDK not configured)")
+                    lines.append("\nAVAILABLE CAPITAL: (unavailable — Coinbase SDK not configured or Coinbase API returned no USD/USDC balance)")
             except Exception:
                 pass
 

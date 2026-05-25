@@ -201,7 +201,8 @@ def normalize_crypto_symbol(symbol: str) -> str:
 
 
 def fetch_top_crypto_symbols(limit: int = 20) -> list[str]:
-    stable = {"USDT", "USDC", "DAI", "FDUSD", "USDE", "USDS", "BUSD", "TUSD", "USDP", "PYUSD"}
+    stable = {"USDT", "USDC", "DAI", "FDUSD", "USDE", "USDS", "BUSD", "TUSD", "USDP", "PYUSD", "USD1"}
+    skip = {"FIGR_HELOC", "LEO", "WBT", "CC", "WBTC", "STETH", "WEETH", "WETH", "CBBTC"}
     fallback = [
         "BTC/USD", "ETH/USD", "XRP/USD", "BNB/USD", "SOL/USD",
         "DOGE/USD", "TRX/USD", "ADA/USD", "HYPE/USD", "LINK/USD",
@@ -218,7 +219,7 @@ def fetch_top_crypto_symbols(limit: int = 20) -> list[str]:
         symbols = []
         for coin in r.json():
             base = str(coin.get("symbol", "")).upper()
-            if not base or base in stable:
+            if not base or base in stable or base in skip or not re.fullmatch(r"[A-Z0-9]{2,12}", base):
                 continue
             sym = f"{base}/USD"
             if sym not in symbols:
@@ -1733,21 +1734,27 @@ def build_chat_context() -> str:
         for p in positions
     )
 
-    cb_lines = "  Coinbase not configured"
+    cb_lines = "  Coinbase SDK: NOT CONFIGURED"
     try:
-        from trade.coinbase_client import is_configured, get_portfolio_summary
+        from trade.coinbase_client import is_configured, get_portfolio_summary, get_crypto_balance
         if is_configured():
             summary = get_portfolio_summary()
             if summary.get("error"):
-                cb_lines = f"  Coinbase error: {summary['error'][:140]}"
+                cb_lines = f"  Coinbase SDK: CONFIGURED but API returned error: {summary['error'][:140]}"
             else:
                 balances = summary.get("balances", [])
-                cb_lines = "\n".join(
+                available_usd = get_crypto_balance("USD") + get_crypto_balance("USDC")
+                holding_lines = "\n".join(
                     f"  {b.get('currency')}: total={b.get('balance')} available={b.get('available_balance', b.get('balance'))}"
                     for b in balances
                 ) or "  No Coinbase balances reported"
+                cb_lines = (
+                    "  Coinbase SDK: CONFIGURED and FUNCTIONING\n"
+                    f"  Available USD+USDC buying power: ${available_usd:.2f}\n"
+                    f"{holding_lines}"
+                )
     except Exception as e:
-        cb_lines = f"  Coinbase unavailable: {str(e)[:140]}"
+        cb_lines = f"  Coinbase SDK: ERROR while checking live API: {str(e)[:140]}"
 
     derivative_rows = latest_for_symbols(crypto_symbols)
     derivative_lines = "\n".join(
@@ -1777,6 +1784,7 @@ def build_chat_context() -> str:
         f"Signals: {stats['signals_today']}\n"
         f"Open positions ({len(positions)}):\n{pos_lines if pos_lines else '  No open positions'}\n"
         f"Coinbase current holdings:\n{cb_lines}\n"
+        "If older signal reasoning says Coinbase is unconfigured, treat it as stale and defer to the live Coinbase SDK status above.\n"
         f"Crypto derivatives feed:\n{derivative_lines}\n"
         f"Stock watchlist: {', '.join(stock_symbols)}\n"
         f"Crypto watchlist: {', '.join(crypto_symbols)}\n"
