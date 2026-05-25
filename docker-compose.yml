@@ -135,6 +135,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  crypto-feeds:
+    build: .
+    container_name: ff_crypto_feeds
+    command: python ingest/crypto_redundant_feeds.py
+    environment:
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER=${ALPACA_PAPER:-true}
+      - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+      - CRYPTO_SYMBOLS=${CRYPTO_SYMBOLS:-BTC/USD,ETH/USD,SOL/USD}
+      - REDUNDANT_FEED_POLL_SECONDS=${REDUNDANT_FEED_POLL_SECONDS:-60}
+      - REDUNDANT_FEED_ANALYZE=${REDUNDANT_FEED_ANALYZE:-true}
+      - CMC_API_KEY=${CMC_API_KEY:-}
+      - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY:-}
+    mem_limit: 256m
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   derivatives:
     build: .
     container_name: ff_derivatives

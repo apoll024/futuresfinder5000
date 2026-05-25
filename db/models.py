@@ -35,6 +35,22 @@ class Bar(Base):
     __table_args__ = (UniqueConstraint("symbol", "ts"),)
 
 
+class FeedBar(Base):
+    """Raw OHLCV bar from an individual market-data feed before consensus aggregation."""
+    __tablename__ = "feed_bars"
+    id        = Column(Integer, primary_key=True, autoincrement=True)
+    source    = Column(String(40), nullable=False)
+    symbol    = Column(String(15), nullable=False)
+    ts        = Column(DateTime, nullable=False)
+    open      = Column(Float)
+    high      = Column(Float)
+    low       = Column(Float)
+    close     = Column(Float)
+    volume    = Column(Float)
+    raw       = Column(Text)
+    __table_args__ = (UniqueConstraint("source", "symbol", "ts"),)
+
+
 class Signal(Base):
     """LLM-generated trade signal + post-trade outcome for XGBoost training."""
     __tablename__ = "signals"
@@ -171,6 +187,7 @@ class ChatMessage(Base):
 
 
 Index("ix_crypto_derivative_symbol_ts", CryptoDerivativeMetric.symbol, CryptoDerivativeMetric.ts)
+Index("ix_feed_bars_symbol_ts", FeedBar.symbol, FeedBar.ts)
 
 
 def write_inbox(category: str, title: str, body: str, source: str = "system") -> None:
