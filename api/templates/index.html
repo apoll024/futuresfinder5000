@@ -1316,17 +1316,18 @@ async function loadEngineStats() {
     const usd = document.getElementById('stat-usd');
     if (usd) usd.textContent = s.cb_error ? 'ERR' : '$' + (s.usd_balance||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
     const pos = document.getElementById('stat-open-pos');
-    if (pos) pos.textContent = s.open_positions ?? '—';
+    if (pos) pos.textContent = s.open_positions != null ? s.open_positions : '—';
     const buys = document.getElementById('stat-buys');
-    if (buys) buys.textContent = s.buys ?? 0;
+    if (buys) buys.textContent = s.buys != null ? s.buys : 0;
     const sells = document.getElementById('stat-sells');
-    if (sells) sells.textContent = s.sells ?? 0;
+    if (sells) sells.textContent = s.sells != null ? s.sells : 0;
 
     // Row 2 — intelligence
     const topSig = document.getElementById('stat-top-signal');
     if (topSig) {
       if (s.top_signal) {
-        topSig.textContent = `${s.top_signal.symbol} ${s.top_signal.action?.toUpperCase()} (${Math.round((s.top_signal.confidence||0)*100)}%)`;
+        const topAction = s.top_signal.action ? s.top_signal.action.toUpperCase() : '';
+        topSig.textContent = `${s.top_signal.symbol} ${topAction} (${Math.round((s.top_signal.confidence||0)*100)}%)`;
         topSig.className = 'val accent';
       } else { topSig.textContent = '—'; topSig.className = 'val'; }
     }
@@ -1423,7 +1424,7 @@ async function loadMarketData() {
 
     // Fear & Greed
     const fg  = data.fear_greed || {};
-    const val = fg.value ?? 50;
+    const val = fg.value != null ? fg.value : 50;
     const cls = fgClass(val);
     document.getElementById('fg-number').textContent = val;
     document.getElementById('fg-number').className   = 'fg-number ' + cls;
@@ -1446,7 +1447,7 @@ async function loadMarketData() {
         const chg    = c.price_change_percentage_24h;
         const chgStr = chg != null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '—';
         const chgCls = chg != null ? (chg >= 0 ? 'up' : 'down') : '';
-        const spark  = buildSparkline(c.sparkline_in_7d?.price);
+        const spark  = buildSparkline(c.sparkline_in_7d ? c.sparkline_in_7d.price : undefined);
         return `<div class="coin-row">
           <span class="coin-rank">#${c.market_cap_rank||'?'}</span>
           <span class="coin-sym">${(c.symbol||'?').toUpperCase()}</span>
@@ -1778,7 +1779,12 @@ async function kbSave(mode) {
 async function kbDelete(id) {
   if (!confirm('Delete this knowledge item?')) return;
   const d = await fetch(`/api/knowledge/${id}`,{method:'DELETE'}).then(r=>r.json());
-  if (d.status === 'deleted') { document.getElementById('kb-item-'+id)?.remove(); toast('Deleted'); loadKB(); }
+  if (d.status === 'deleted') {
+    const item = document.getElementById('kb-item-'+id);
+    if (item) item.remove();
+    toast('Deleted');
+    loadKB();
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2109,8 +2115,8 @@ async function runBacktest() {
           ['Avg Win', `+${d.avg_win_pct}%`], ['Avg Loss', `${d.avg_loss_pct}%`],
           ['Total P&L', `${d.total_pct >= 0 ? '+' : ''}${d.total_pct}%`],
           ['Sharpe', d.sharpe],
-          ['Best', `${d.best_trade?.symbol} ${d.best_trade?.pct > 0 ? '+' : ''}${d.best_trade?.pct}%`],
-          ['Worst', `${d.worst_trade?.symbol} ${d.worst_trade?.pct}%`],
+          ['Best', d.best_trade ? `${d.best_trade.symbol} ${d.best_trade.pct > 0 ? '+' : ''}${d.best_trade.pct}%` : '—'],
+          ['Worst', d.worst_trade ? `${d.worst_trade.symbol} ${d.worst_trade.pct}%` : '—'],
         ].map(([k,v])=>`<tr><td style="padding:3px 8px;color:var(--muted)">${k}</td><td style="padding:3px 8px;font-weight:600">${v}</td></tr>`).join('')}
       </table>`;
   } catch(e) {

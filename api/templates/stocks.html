@@ -1387,7 +1387,12 @@ async function kbSave(mode) {
 async function kbDelete(id) {
   if (!confirm('Delete this knowledge item?')) return;
   const d = await fetch(`/api/knowledge/${id}`,{method:'DELETE'}).then(r=>r.json());
-  if (d.status === 'deleted') { document.getElementById('kb-item-'+id)?.remove(); toast('Deleted'); kbLoad(); }
+  if (d.status === 'deleted') {
+    const item = document.getElementById('kb-item-'+id);
+    if (item) item.remove();
+    toast('Deleted');
+    kbLoad();
+  }
 }
 
 
