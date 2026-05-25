@@ -86,7 +86,6 @@ def settle_day(trade_date: date):
               f"outcome={outcome_pct:+.2f}% {icon}")
 
     session.commit()
-    session.close()
 
     total = len(signals)
     correct = sum(1 for s in signals if s.was_correct)
@@ -96,6 +95,7 @@ def settle_day(trade_date: date):
 
     # Write EOD knowledge base summary for LLM offline learning
     _write_eod_summary(trade_date, signals, win_rate)
+    session.close()
 
 
 def _write_eod_summary(trade_date: date, signals: list, win_rate: float):
