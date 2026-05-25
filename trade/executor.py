@@ -27,7 +27,7 @@ SECRET_KEY       = os.getenv("ALPACA_SECRET_KEY")
 MAX_POSITION_USD = float(os.getenv("MAX_POSITION_USD", "500"))
 MAX_DAILY_LOSS   = float(os.getenv("MAX_DAILY_LOSS_USD", "200"))
 MAX_OPEN         = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
-MIN_CONFIDENCE   = 0.65
+MIN_CONFIDENCE   = float(os.getenv("MIN_SIGNAL_CONFIDENCE", "0.50"))
 ET               = ZoneInfo("America/New_York")
 EOD_CLOSE_TIME   = dtime(15, 45)  # force-close all positions at 3:45 PM ET
 

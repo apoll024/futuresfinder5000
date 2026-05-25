@@ -422,17 +422,16 @@ def compute_indicators(df_1m: pd.DataFrame) -> dict:
 
 def _signal_action(ind: dict, fear_greed_val: int) -> str:
     """
-    Technical entry/exit decision using multi-timeframe confirmation.
-    Entry: 1h bias bullish + 5m confirming + 1m entry signal + FG≥30
-    Exit:  any major exit condition on any timeframe OR FG<20
+    Lightweight technical bias for the LLM.
+    This is deliberately advisory: the model can override it after weighing the
+    broader context, risk/reward, positioning, news, and available capital.
     """
     rsi_1m  = ind.get("1m_rsi_14") or ind.get("rsi_14")
     rsi_5m  = ind.get("5m_rsi_14")
     vol     = ind.get("1m_volume_ratio") or ind.get("volume_ratio")
     bb_b    = ind.get("1m_bb_pct_b") or ind.get("bb_pct_b")
 
-    # Hard exits — use 1m primary; amplify if 1h also bearish
-    exit_conds = any([
+    bearish = sum(bool(x) for x in [
         rsi_1m is not None and rsi_1m > 75,
         not ind.get("1m_above_vwap"),
         (ind.get("1m_ema_9") is not None and ind.get("1m_ema_21") is not None
@@ -440,29 +439,25 @@ def _signal_action(ind: dict, fear_greed_val: int) -> str:
         not ind.get("1m_macd_bull"),
         bb_b is not None and bb_b > 0.95,
         fear_greed_val < 20,
-        # 1h timeframe bear override
         (ind.get("1h_trend_aligned") is False and not ind.get("1h_above_vwap")),
     ])
-    if exit_conds:
+    if bearish >= 3:
         return "sell"
 
-    # Entry: all three TFs must align
-    entry_1m = all([
+    bullish = sum(bool(x) for x in [
         ind.get("1m_trend_aligned"),
         ind.get("1m_above_vwap"),
-        (vol is None or vol >= 1.0),  # vol=None when Alpaca crypto sends V=0 (data unavailable)
+        (vol is None or vol >= 1.0),
         ind.get("1m_macd_bull"),
-        rsi_1m is not None and 35 <= rsi_1m <= 68,
-        bb_b is not None and 0.4 <= bb_b <= 0.9,
+        rsi_1m is not None and 30 <= rsi_1m <= 72,
+        bb_b is not None and 0.25 <= bb_b <= 0.95,
         fear_greed_val >= 30,
     ])
-    # 5m confirmation (relaxed — just needs to be non-bearish)
     conf_5m = (not ind.get("5m_trend_aligned") is False
                and not (rsi_5m is not None and rsi_5m > 75))
-    # 1h bias check (needs at least above VWAP or trend aligned)
     bias_1h = ind.get("1h_above_vwap") or ind.get("1h_trend_aligned") or not snap_5m_present(ind)
 
-    return "buy" if (entry_1m and conf_5m and bias_1h) else "hold"
+    return "buy" if bullish >= 4 and conf_5m and bias_1h else "hold"
 
 
 def snap_5m_present(ind: dict) -> bool:
@@ -570,10 +565,10 @@ RECENT NEWS ({symbol.split('/')[0]}):
 
 RULES:
   - Crypto trades 24/7. Use IOC time-in-force (DAY is NOT valid for crypto).
-  - Multi-timeframe confirmation required: 1h bias → 5m confirm → 1m entry.
-  - High funding rate (crowded_long) = reversal risk; adjust confidence down for buys.
-  - Rising OI + rising price = strong trend. Falling OI + rising price = weak move.
-  - Suggested technical action: {suggested_action.upper()}
+  - Your goal is profit with caution. Decide buy/sell/hold from the complete context.
+  - Multi-timeframe indicators, funding, OI, news, macro context, and recent outcomes are evidence, not mandatory gates.
+  - High funding can imply crowded risk; rising OI can imply trend strength. Weigh these rather than applying rigid rules.
+  - Advisory technical bias: {suggested_action.upper()} — you may override it when the broader setup justifies it.
 
 Respond ONLY with valid JSON, no markdown:
 {{"action":"buy"|"sell"|"hold","confidence":0.0-1.0,"reasoning":"<concise reason ≤150 chars>"}}"""

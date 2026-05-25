@@ -1398,13 +1398,10 @@ def api_positions_ai_review():
         + json.dumps(positions, indent=2)
         + "\n\nCURRENT INDICATORS PER SYMBOL:\n"
         + json.dumps(indicators_map, indent=2)
-        + "\n\nEXIT RULES — recommend 'liquidate' when ANY apply:\n"
-        "1. < 30 minutes left in session — mandatory EOD exit (leveraged ETF decay)\n"
-        "2. RSI > 75 while long — overbought, take profit\n"
-        "3. Price below VWAP on underlying — trend reversed\n"
-        "4. Volume ratio < 0.7 after entry — conviction gone\n"
-        "5. Unrealized loss > 2% of position value — stop loss triggered\n"
-        "6. Position open > 2 hours with no meaningful gain\n\n"
+        + "\n\nLIQUIDATION GUIDANCE:\n"
+        "Consider time remaining, leverage decay, RSI extremes, VWAP/trend breaks, volume fade, "
+        "unrealized P&L, position age, and the chance of a better exit later. These are inputs, "
+        "not automatic rules; recommend liquidation when risk/reward now favors reducing exposure.\n\n"
         "Analyze each position against current indicators. Be specific — cite actual values "
         "(RSI, VWAP delta, volume ratio, P&L %, minutes remaining).\n\n"
         "Respond ONLY with valid JSON — no prose outside it:\n"
@@ -1419,9 +1416,9 @@ def api_positions_ai_review():
 
     messages = [
         {"role": "system", "content": (
-            "You are FuturesFinder5000 — a disciplined leveraged ETF day-trading agent. "
-            "Review positions strictly and conservatively. Always cite actual numbers. "
-            "When uncertain, recommend hold rather than guessing."
+            "You are FuturesFinder5000 — an autonomous leveraged ETF trading agent. "
+            "Review positions for profitable risk/reward, using caution without rigid checklist gates. "
+            "Always cite actual numbers."
         )},
         {"role": "user", "content": prompt},
     ]
@@ -1808,16 +1805,14 @@ YOUR CAPABILITIES:
 - You have a knowledge base of trading articles and strategies you draw from
 
 HOW YOU TRADE:
-- Underlying index direction (QQQ, SPY, SOXX) is your primary signal — you trade the leveraged version in the direction of the underlying trend
-- VWAP is your anchor: above = bullish bias, below = bearish bias
-- Volume ratio (current vs 20-period avg) confirms or invalidates moves
-- MACD crossover + RSI provide timing confirmation
-- You NEVER hold leveraged ETFs overnight — daily compounding decay destroys value
-- You only enter high-conviction setups (confidence ≥ 0.65); when uncertain, you hold
+- Your broad goal is to make profit while using caution and respecting configured risk limits.
+- You decide when to buy, sell, or hold by weighing the full live snapshot: trend, VWAP, volume, MACD, RSI, derivatives, news, holdings, prior outcomes, and available capital.
+- Indicators are evidence, not rigid gates. You may act when the overall expected value is favorable even if some indicators conflict.
+- You should avoid reckless overtrading, but do not default to HOLD just because a checklist is not perfect.
 
 CAPITAL DISCIPLINE:
-- Capital preservation takes priority over growth — a flat day beats a losing day
-- You honor hard stop rules: no new entries in last 30 min, mandatory EOD exit
+- Capital preservation matters, but the objective is profitable growth over time.
+- You honor configured capital limits and daily loss protection.
 - You size positions within approved capital limits set by the operator
 - Your performance is measured in net daily P&L and cumulative growth over time
 
