@@ -153,6 +153,22 @@ def get_crypto_balance(currency: str) -> float:
         return 0.0
 
 
+def get_spot_price(currency: str) -> float | None:
+    """Return current USD spot price for a Coinbase currency, or None if unavailable."""
+    try:
+        if currency.upper() in ("USD", "USDC", "USDT", "DAI"):
+            return 1.0
+        data = _req("GET", f"/api/v3/brokerage/products/{currency.upper()}-USD/ticker")
+        trades = data.get("trades") or []
+        if trades:
+            return float(trades[0].get("price") or 0)
+        if data.get("price"):
+            return float(data["price"])
+    except Exception as e:
+        print(f"  [coinbase] spot fetch error for {currency}: {e}")
+    return None
+
+
 def get_portfolio_summary() -> dict:
     """
     Return a summary of all non-zero Coinbase balances.

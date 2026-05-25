@@ -3,7 +3,7 @@ FuturesFinder5000 — Interactive web dashboard
 Controls: trade on/off toggle, ingest on/off toggle, symbol management, capital allocation
 Data: live signals, projected/actual trades, daily P&L, pending signals
 """
-import os, sys, json, re, requests, hashlib, functools, threading
+import os, sys, json, re, requests, hashlib, functools, threading, math
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -122,6 +122,17 @@ def get_ingest_status() -> dict:
 def get_symbols() -> list[str]:
     raw = get_setting("symbols", "TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX")
     return [s.strip().upper() for s in raw.split(",") if s.strip()]
+
+
+def json_safe(value):
+    """Recursively convert NaN/Infinity values to None before Flask JSON serialization."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [json_safe(v) for v in value]
+    return value
 
 
 def get_trade_mode() -> str:
@@ -271,7 +282,7 @@ def latest_signals(symbols: list[str]) -> list[dict]:
             "reasoning":  sig.reasoning  if sig else "Waiting for data...",
             "ts":         sig.ts.strftime("%H:%M:%S") if sig else "—",
             "acted_on":   sig.acted_on   if sig else False,
-            "indicators": json.loads(sig.indicators or "{}") if sig else {},
+            "indicators": json_safe(json.loads(sig.indicators or "{}")) if sig else {},
             "last_price": round(bar.close, 2) if bar else None,
             "bar_count":  session.query(Bar).filter(Bar.symbol == sym).count(),
         })
@@ -705,7 +716,7 @@ def api_alpaca_account():
 @login_required
 def coinbase_holdings():
     """Return Coinbase account balances with USD values from current prices."""
-    from trade.coinbase_client import is_configured, get_portfolio_summary
+    from trade.coinbase_client import is_configured, get_portfolio_summary, get_spot_price
     if not is_configured():
         return jsonify({"configured": False, "balances": []})
     summary = get_portfolio_summary()
@@ -723,7 +734,16 @@ def coinbase_holdings():
                 if bar:
                     bal["usd_value"] = round(float(bal.get("balance", 0)) * float(bar.close), 2)
                 else:
-                    bal["usd_value"] = None
+                    px = get_spot_price(currency)
+                    bal["usd_value"] = round(float(bal.get("balance", 0)) * px, 2) if px else None
+        summary["balances"] = sorted(
+            summary.get("balances", []),
+            key=lambda b: (
+                0 if b.get("currency") in ("USD", "USDC", "USDT", "DAI") else 1,
+                -(b.get("usd_value") or 0),
+                b.get("currency") or "",
+            ),
+        )
     finally:
         db.close()
     return jsonify(summary)
@@ -741,9 +761,7 @@ def coinbase_readiness():
             result[sym] = {"status": "error", "reason": "Coinbase API not configured"}
         return jsonify({"symbols": result})
     try:
-        usd_balance = get_crypto_balance("USD") + get_crypto_balance("USDC")
-        usdc_balance = get_crypto_balance("USDC")
-        total_usd = usd_balance + usdc_balance
+        total_usd = get_crypto_balance("USD") + get_crypto_balance("USDC")
     except Exception as e:
         for sym in symbols:
             result[sym] = {"status": "error", "reason": f"Coinbase API error: {e}"}

@@ -1224,7 +1224,8 @@ async function saveSettings() {
   };
   const data = await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
   if (data.error) { toast(data.error, false); return; }
-  document.getElementById('stat-capital').textContent = '$' + parseInt(body.approved_capital_usd).toLocaleString();
+  const cap = document.getElementById('stat-capital');
+  if (cap) cap.textContent = '$' + parseInt(body.approved_capital_usd).toLocaleString();
   toast('Limits saved');
 }
 
@@ -1291,7 +1292,7 @@ async function runAdvisor() {
             const j = JSON.parse(tok);
             if (j.content) { full += j.content; out.textContent = full; out.scrollTop = out.scrollHeight; }
             if (j.error) { out.textContent = '⚠ ' + j.error; }
-          } catch {}
+          } catch(e) {}
         }
       });
     }
@@ -1634,7 +1635,7 @@ function updateCbSidebar() {
     return;
   }
   let html = '';
-  _cbHoldings.slice(0, 6).forEach(b => {
+  _cbHoldings.forEach(b => {
     const val = b.usd_value != null ? fmt$(b.usd_value) : '';
     html += `<div class="cb-balance-row">
       <span class="cb-balance-currency">${escHtml(b.currency)}</span>
