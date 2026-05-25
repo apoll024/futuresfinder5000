@@ -107,34 +107,18 @@ RISK RULES (non-negotiable):
 
 def fetch_available_usdc() -> float | None:
     """
-    Query Coinbase SDK for available USDC balance.
-    Returns float dollars or None if unavailable / not configured.
+    Query Coinbase for available USDC (and USD) balance via the JWT-based client.
+    Returns combined USD+USDC float or None if unavailable / not configured.
     """
     try:
-        from coinbase.rest import RESTClient
-        api_key    = os.getenv("COINBASE_API_KEY", "")
-        api_secret = os.getenv("COINBASE_API_SECRET", "")
-        if not api_key or not api_secret:
+        from trade.coinbase_client import is_configured, get_crypto_balance
+        if not is_configured():
             return None
-        client   = RESTClient(api_key=api_key, api_secret=api_secret)
-        accounts = client.get_accounts()
-        for acct in (accounts.accounts or []):
-            currency = ""
-            if hasattr(acct, "currency"):
-                currency = acct.currency
-            elif isinstance(acct, dict):
-                currency = acct.get("currency", "")
-            if currency == "USDC":
-                bal = None
-                if hasattr(acct, "available_balance"):
-                    bal = acct.available_balance
-                elif isinstance(acct, dict):
-                    bal = (acct.get("available_balance") or {}).get("value")
-                if bal is not None:
-                    return float(bal)
+        usdc = get_crypto_balance("USDC")
+        usd  = get_crypto_balance("USD")
+        return round(usdc + usd, 2)
     except Exception:
-        pass
-    return None
+        return None
 
 
 # ── DB context fetcher ────────────────────────────────────────────────────────

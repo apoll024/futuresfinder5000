@@ -125,8 +125,12 @@ def get_symbols() -> list[str]:
 
 
 def get_trade_mode() -> str:
-    mode = get_setting("trade_mode", "paper")
-    return mode if mode not in ("suggest",) else "paper"  # migrate legacy suggest → paper
+    mode = get_setting("trade_mode", "live")
+    # Migrate legacy modes: suggest/paper → live (crypto uses Coinbase regardless)
+    if mode in ("suggest", "paper"):
+        set_setting("trade_mode", "live")
+        return "live"
+    return mode
 
 
 def get_approved_capital() -> float:
@@ -436,9 +440,9 @@ def index():
 def toggle_trading():
     """Switch between off and paper trading modes. Live requires manual env change."""
     current  = get_trade_mode()
-    new_mode = "paper" if current in ("off", "suggest") else "off"
+    new_mode = "live" if current in ("off",) else "off"
     set_setting("trade_mode", new_mode)
-    return jsonify({"trade_mode": new_mode, "trading_on": new_mode == "paper"})
+    return jsonify({"trade_mode": new_mode, "trading_on": new_mode == "live"})
 
 
 @app.route("/api/ingest/status")
@@ -840,10 +844,10 @@ def crypto_engine_status():
 
     mode = get_trade_mode()
     on   = get_crypto_enabled()
-    if on and mode == "live":
+    if on and mode in ("live",):
         engine_label, engine_cls = "LIVE", "positive"
     elif on:
-        engine_label, engine_cls = "PAPER", "accent"
+        engine_label, engine_cls = "LIVE", "positive"
     else:
         engine_label, engine_cls = "OFF", "negative"
 

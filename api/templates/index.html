@@ -727,7 +727,7 @@
     <div class="stats-row">
       <div class="stat-card hl">
         <div class="lbl">Engine</div>
-        <div class="val" id="stat-engine">{{ 'LIVE' if stats.trade_mode == 'live' and crypto_enabled else ('PAPER' if crypto_enabled else 'OFF') }}</div>
+        <div class="val" id="stat-engine">{{ 'LIVE' if crypto_enabled else 'OFF' }}</div>
       </div>
       <div class="stat-card hl">
         <div class="lbl">Daily P&amp;L</div>
@@ -1195,7 +1195,7 @@ async function toggleWatchlistMode() {
 async function toggleTrading() {
   const data = await fetch('/api/trade/toggle', {method:'POST'}).then(r=>r.json());
   document.getElementById('badge-mode').textContent = data.trade_mode.toUpperCase();
-  toast(data.trading_on ? 'Trading ENABLED (paper)' : 'Trading DISABLED');
+  toast(data.trading_on ? 'Trading ENABLED' : 'Trading DISABLED');
 }
 
 async function toggleIngest() {
