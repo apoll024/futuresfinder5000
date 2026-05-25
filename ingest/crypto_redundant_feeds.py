@@ -96,7 +96,7 @@ def _bar(source: str, symbol: str, ts, open_, high, low, close, volume, raw=None
 
 
 def fetch_coinbase(symbol: str, limit: int = 4) -> list[dict]:
-    product = COINBASE_PRODUCTS.get(symbol)
+    product = COINBASE_PRODUCTS.get(symbol) or symbol.replace("/", "-")
     if not product:
         return []
     end = datetime.now(timezone.utc)
@@ -117,7 +117,7 @@ def fetch_coinbase(symbol: str, limit: int = 4) -> list[dict]:
 
 
 def fetch_kraken(symbol: str, limit: int = 4) -> list[dict]:
-    pair = KRAKEN_PAIRS.get(symbol)
+    pair = KRAKEN_PAIRS.get(symbol) or symbol.replace("/", "")
     if not pair:
         return []
     r = requests.get(
