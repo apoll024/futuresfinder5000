@@ -1408,7 +1408,7 @@ def api_ai_advisor():
     stock_syms  = get_symbols()
     all_sigs    = latest_signals(crypto_syms + stock_syms[:5])
     now         = datetime.now(ET)
-    mkt_open    = "09:45" <= now.strftime("%H:%M") <= "15:45"
+    equities_open = "09:45" <= now.strftime("%H:%M") <= "15:45"
 
     sig_summary = [
         {"symbol": s["symbol"], "action": s["action"],
@@ -1417,7 +1417,8 @@ def api_ai_advisor():
     ]
 
     context = (
-        f"Date/Time: {now.strftime('%Y-%m-%d %H:%M ET')} | Market: {'OPEN' if mkt_open else 'CLOSED'}\n"
+        f"Date/Time: {now.strftime('%Y-%m-%d %H:%M ET')} | "
+        f"Equities session: {'OPEN' if equities_open else 'CLOSED'} | Crypto market: OPEN 24/7\n"
         f"Crypto watchlist: {', '.join(crypto_syms)}\n"
         f"Stock watchlist: {', '.join(stock_syms)}\n\n"
         f"Recent trades (last 20):\n{json.dumps(trades, indent=2)}\n\n"
@@ -1605,11 +1606,13 @@ def api_health_latest():
 
 def build_chat_context() -> str:
     """Snapshot of current market state injected into every LLM chat turn."""
-    sigs      = latest_signals(get_symbols())
+    stock_symbols = get_symbols()
+    crypto_symbols = get_crypto_symbols()
+    sigs      = latest_signals(stock_symbols + crypto_symbols)
     stats     = daily_stats()
     ingest_st = get_ingest_status()
     now       = datetime.now(ET)
-    mkt_open  = "09:45" <= now.strftime("%H:%M") <= "15:45"
+    equities_open = "09:45" <= now.strftime("%H:%M") <= "15:45"
 
     sig_lines = "\n".join(
         f"  {s['symbol']}: {s['action'].upper()} conf={s['confidence']}%"
@@ -1628,9 +1631,25 @@ def build_chat_context() -> str:
         for p in positions
     )
 
+    cb_lines = "  Coinbase not configured"
+    try:
+        from trade.coinbase_client import is_configured, get_portfolio_summary
+        if is_configured():
+            summary = get_portfolio_summary()
+            if summary.get("error"):
+                cb_lines = f"  Coinbase error: {summary['error'][:140]}"
+            else:
+                balances = summary.get("balances", [])
+                cb_lines = "\n".join(
+                    f"  {b.get('currency')}: total={b.get('balance')} available={b.get('available_balance', b.get('balance'))}"
+                    for b in balances
+                ) or "  No Coinbase balances reported"
+    except Exception as e:
+        cb_lines = f"  Coinbase unavailable: {str(e)[:140]}"
+
     return (
         f"Time: {now.strftime('%Y-%m-%d %H:%M ET')} | "
-        f"Market: {'OPEN' if mkt_open else 'CLOSED'}\n"
+        f"Equities session: {'OPEN' if equities_open else 'CLOSED'} | Crypto market: OPEN 24/7\n"
         f"Trade mode: {get_trade_mode()} | "
         f"Approved capital: ${get_approved_capital():,.0f} | "
         f"Max position: ${get_max_position():,.0f} | "
@@ -1645,6 +1664,9 @@ def build_chat_context() -> str:
         f"Trades: {stats['trades_today']} (B={stats['buys']} S={stats['sells']}) | "
         f"Signals: {stats['signals_today']}\n"
         f"Open positions ({len(positions)}):\n{pos_lines if pos_lines else '  No open positions'}\n"
+        f"Coinbase current holdings:\n{cb_lines}\n"
+        f"Stock watchlist: {', '.join(stock_symbols)}\n"
+        f"Crypto watchlist: {', '.join(crypto_symbols)}\n"
         f"Watchlist signals:\n{sig_lines if sig_lines else '  No signals yet'}"
     )
 
@@ -1654,13 +1676,14 @@ def build_chat_context() -> str:
 CHAT_SYSTEM_PROMPT = """You are FuturesFinder5000 — an autonomous leveraged ETF day-trading agent running live on a dedicated Oracle Cloud server.
 
 YOUR MISSION:
-You exist to grow the capital allocated to you through disciplined, rules-based day trading of leveraged ETFs (TQQQ/SQQQ, UPRO/SPXU, SOXL/SOXS and related pairs). You are not a generic assistant — you are a trading agent first. Every answer you give should reflect that purpose.
+You exist to grow the capital allocated to you through disciplined, rules-based trading of leveraged ETFs and crypto assets. You are not a generic assistant — you are a trading agent first. Every answer you give should reflect that purpose.
 
 YOUR CAPABILITIES:
-- You analyze real-time 1-minute bar data and technical indicators every minute the market is open
+- You analyze real-time 1-minute bar data and technical indicators when each asset class is tradable
 - You issue buy/sell/hold signals that get executed automatically against your allocated capital
 - You track your own P&L, win rate, and open positions in a live PostgreSQL database
 - You can autonomously add new symbols to your watchlist if you identify a strong setup
+- Crypto markets trade 24/7; do not say "the market is closed" for crypto just because the equities session is closed
 - You have a knowledge base of trading articles and strategies you draw from
 
 HOW YOU TRADE:
@@ -1679,7 +1702,8 @@ CAPITAL DISCIPLINE:
 
 HOW TO RESPOND:
 - Be direct and data-driven. Always cite actual values from the live snapshot when answering.
-- If the market is CLOSED, say so plainly — do not speculate about absent signals.
+- Distinguish equities from crypto: if equities are closed, say "equities are closed" but crypto remains tradable 24/7.
+- If crypto data/signals are missing, say the crypto data is missing/stale; do not claim crypto cannot trade due to market hours.
 - If a value is not in the snapshot, say so — never fabricate data.
 - Do not describe your own infrastructure or internal errors — you have no visibility into those.
 - When asked about performance, reference actual P&L and trade history from the snapshot.
