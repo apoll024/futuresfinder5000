@@ -456,6 +456,18 @@
       background: var(--pur-dim); color: var(--purple3);
       border: 1px solid rgba(139,92,246,.2);
     }
+    .deriv-list { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+    .deriv-title { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+    .deriv-row {
+      display: grid; grid-template-columns: 48px 1fr; gap: 6px;
+      padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+      font-size: 10px;
+    }
+    .deriv-sym { color: var(--purple3); font-weight: 800; }
+    .deriv-metrics { color: var(--muted); line-height: 1.45; }
+    .deriv-metrics b { color: var(--text); font-weight: 700; }
+    .deriv-pos { color: var(--green2); }
+    .deriv-neg { color: var(--red2); }
 
     /* ── Wallet Panel ── */
     .wallet-widget {
@@ -983,6 +995,12 @@
         <div class="trend-lbl">🔥 Trending</div>
         <div class="trend-chips" id="trend-chips"></div>
       </div>
+
+      <!-- Derivatives visibility -->
+      <div class="deriv-list">
+        <div class="deriv-title">Derivatives Feed</div>
+        <div id="derivatives-list" style="color:var(--muted);font-size:10px;">Loading funding/OI…</div>
+      </div>
     </div>
 
     <!-- ── Coinbase Status (sidebar) ── -->
@@ -1419,6 +1437,11 @@ function fmtPrice(p) {
   return '$' + p.toFixed(4);
 }
 
+function fmtPct(v) {
+  if (v === null || v === undefined || isNaN(Number(v))) return '—';
+  return (Number(v) >= 0 ? '+' : '') + Number(v).toFixed(4) + '%';
+}
+
 async function loadMarketData() {
   try {
     const data = await fetch('/api/crypto/market').then(r => r.json());
@@ -1467,6 +1490,29 @@ async function loadMarketData() {
       area.style.display = '';
       document.getElementById('trend-chips').innerHTML =
         trending.map(t => `<span class="trend-chip">${escHtml(String(t))}</span>`).join('');
+    }
+
+    const derivEl = document.getElementById('derivatives-list');
+    const derivs = (data.derivatives || []).filter(d => d && d.mapped !== false && !d.error);
+    if (derivEl) {
+      if (!derivs.length) {
+        derivEl.innerHTML = '<div style="color:var(--muted);font-size:10px;">No derivatives feed data yet.</div>';
+      } else {
+        derivEl.innerHTML = derivs.map(d => {
+          const funding = Number(d.funding_rate || 0);
+          const fundCls = funding >= 0 ? 'deriv-pos' : 'deriv-neg';
+          const oiVal = d.open_interest_value ? '$' + (Number(d.open_interest_value) / 1e9).toFixed(2) + 'B' : '—';
+          const ls = d.long_short_ratio ? Number(d.long_short_ratio).toFixed(2) : '—';
+          const taker = d.taker_buy_sell_ratio ? Number(d.taker_buy_sell_ratio).toFixed(2) : '—';
+          return `<div class="deriv-row">
+            <div class="deriv-sym">${escHtml((d.symbol || '').replace('/USD',''))}</div>
+            <div class="deriv-metrics">
+              Funding <b class="${fundCls}">${fmtPct(d.funding_rate)}</b> · OI <b>${escHtml(d.open_interest_trend || 'n/a')}</b> ${oiVal}<br>
+              Long/Short <b>${ls}</b> · Taker B/S <b>${taker}</b>
+            </div>
+          </div>`;
+        }).join('');
+      }
     }
 
     // Ticker bar — duplicate content for seamless scroll

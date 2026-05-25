@@ -26,6 +26,7 @@ import ta.momentum as ta_momentum
 import ta.volatility as ta_vol
 from db.models import Session, Bar, Signal, get_setting, log_llm_session
 from analyze.ai_context import SYSTEM_INSTRUCTIONS, build_db_context
+from ingest.crypto_derivatives import fetch_and_store, latest_derivatives
 
 LLM_API_URL    = os.getenv("LLM_API_URL", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
 LLM_MODEL      = os.getenv("LLM_MODEL",   "gemini-3.5-flash")
@@ -623,8 +624,34 @@ def run_analysis(symbol: str):
     market     = fetch_market_context()
     trending   = fetch_trending_topics()
     global_ctx = fetch_global_context()
-    funding    = fetch_funding_rate(symbol)
-    oi         = fetch_open_interest(symbol)
+    deriv = latest_derivatives(symbol)
+    if not deriv:
+        try:
+            deriv = fetch_and_store(symbol)
+        except Exception as e:
+            print(f"  [crypto] derivatives feed unavailable for {symbol}: {e}")
+            deriv = {}
+    funding = (
+        {
+            "rate": deriv.get("funding_rate"),
+            "trend": "n/a",
+            "signal": (
+                "crowded_long" if (deriv.get("funding_rate") or 0) > 0.05 else
+                "crowded_short" if (deriv.get("funding_rate") or 0) < -0.05 else
+                "neutral"
+            ),
+        }
+        if deriv and deriv.get("mapped") is not False else fetch_funding_rate(symbol)
+    )
+    oi = (
+        {
+            "open_interest": deriv.get("open_interest"),
+            "notional_b": round((deriv.get("open_interest_value") or 0) / 1e9, 2)
+                          if deriv.get("open_interest_value") else None,
+            "oi_trend": deriv.get("open_interest_trend"),
+        }
+        if deriv and deriv.get("mapped") is not False else fetch_open_interest(symbol)
+    )
 
     result = call_llm(
         symbol, ind, news, fg_val, fg_label, suggested,
@@ -646,7 +673,7 @@ def run_analysis(symbol: str):
             symbol=symbol,
             action=action,
             confidence=confidence,
-            indicators=json.dumps(ind),
+            indicators=json.dumps({**ind, "derivatives": deriv or {}}),
             reasoning=reasoning,
         )
         db.add(sig)

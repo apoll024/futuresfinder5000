@@ -96,6 +96,30 @@ class HealthMetric(Base):
     note        = Column(Text)
 
 
+class CryptoDerivativeMetric(Base):
+    """Perpetual futures derivatives metrics used for crypto market visibility."""
+    __tablename__ = "crypto_derivative_metrics"
+    id                    = Column(Integer, primary_key=True, autoincrement=True)
+    symbol                = Column(String(15), nullable=False, index=True)
+    exchange_symbol       = Column(String(20), nullable=False)
+    source                = Column(String(40), default="binance_futures")
+    ts                    = Column(DateTime, default=datetime.utcnow, index=True)
+    funding_rate          = Column(Float)  # percent, e.g. 0.0100 means 0.01%
+    mark_price            = Column(Float)
+    index_price           = Column(Float)
+    next_funding_time     = Column(DateTime)
+    open_interest         = Column(Float)
+    open_interest_value   = Column(Float)  # notional USD/USDT value when available
+    open_interest_trend   = Column(String(12))
+    long_short_ratio      = Column(Float)
+    long_account_pct      = Column(Float)
+    short_account_pct     = Column(Float)
+    taker_buy_sell_ratio  = Column(Float)
+    taker_buy_volume      = Column(Float)
+    taker_sell_volume     = Column(Float)
+    raw                   = Column(Text)
+
+
 class KnowledgeItem(Base):
     """Persistent knowledge base — articles, notes, EOD summaries injected into LLM context."""
     __tablename__ = "knowledge"
@@ -144,6 +168,9 @@ class ChatMessage(Base):
     service      = Column(String(20))               # advisor | review | chat
     role         = Column(String(10))               # user | assistant | system
     content      = Column(Text)
+
+
+Index("ix_crypto_derivative_symbol_ts", CryptoDerivativeMetric.symbol, CryptoDerivativeMetric.ts)
 
 
 def write_inbox(category: str, title: str, body: str, source: str = "system") -> None:

@@ -135,5 +135,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  derivatives:
+    build: .
+    container_name: ff_derivatives
+    command: python ingest/crypto_derivatives.py
+    environment:
+      - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
+      - CRYPTO_SYMBOLS=${CRYPTO_SYMBOLS:-BTC/USD,ETH/USD,SOL/USD}
+      - DERIVATIVES_POLL_SECONDS=${DERIVATIVES_POLL_SECONDS:-300}
+    mem_limit: 256m
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:

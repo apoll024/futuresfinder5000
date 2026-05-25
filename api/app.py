@@ -21,6 +21,7 @@ from db.models import (
     init_db, Session, Bar, Signal, Trade, HealthMetric, KnowledgeItem,
     LLMSession, get_setting, set_setting, AIMessage, write_inbox,
 )
+from ingest.crypto_derivatives import fetch_and_store, latest_for_symbols
 
 app           = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "ff5k-change-me-in-prod-32bytes!!")
@@ -609,10 +610,33 @@ def crypto_market():
     except Exception as e:
         print(f"[market] trending error: {e}")
 
-    data = {"fear_greed": fear_greed, "coins": coins, "trending": trending}
+    data = {
+        "fear_greed": fear_greed,
+        "coins": coins,
+        "trending": trending,
+        "derivatives": latest_for_symbols(get_crypto_symbols()),
+    }
     _market_cache["data"] = data
     _market_cache["ts"]   = now
     return jsonify({**data, "cached": False})
+
+
+@app.route("/api/crypto/derivatives")
+@login_required
+def crypto_derivatives():
+    """Latest derivatives metrics: funding, OI, long/short ratio, and taker flow."""
+    symbols = get_crypto_symbols()
+    if request.args.get("refresh") == "1":
+        rows = []
+        for sym in symbols:
+            try:
+                rows.append(fetch_and_store(sym))
+            except Exception as e:
+                rows.append({"symbol": sym, "error": str(e)})
+        _market_cache["data"] = None
+        _market_cache["ts"] = 0.0
+        return jsonify({"symbols": rows, "refreshed": True})
+    return jsonify({"symbols": latest_for_symbols(symbols), "refreshed": False})
 
 
 # ── Wallet endpoints ─────────────────────────────────────────────────────────
@@ -1665,6 +1689,16 @@ def build_chat_context() -> str:
     except Exception as e:
         cb_lines = f"  Coinbase unavailable: {str(e)[:140]}"
 
+    derivative_rows = latest_for_symbols(crypto_symbols)
+    derivative_lines = "\n".join(
+        f"  {d.get('symbol')}: funding={d.get('funding_rate')}% "
+        f"OI={d.get('open_interest_trend') or 'n/a'} "
+        f"L/S={d.get('long_short_ratio') or 'n/a'} "
+        f"taker={d.get('taker_buy_sell_ratio') or 'n/a'}"
+        for d in derivative_rows
+        if d and d.get("mapped") is not False and not d.get("error")
+    ) or "  No derivatives feed data yet"
+
     return (
         f"Time: {now.strftime('%Y-%m-%d %H:%M ET')} | "
         f"Equities session: {'OPEN' if equities_open else 'CLOSED'} | Crypto market: OPEN 24/7\n"
@@ -1683,6 +1717,7 @@ def build_chat_context() -> str:
         f"Signals: {stats['signals_today']}\n"
         f"Open positions ({len(positions)}):\n{pos_lines if pos_lines else '  No open positions'}\n"
         f"Coinbase current holdings:\n{cb_lines}\n"
+        f"Crypto derivatives feed:\n{derivative_lines}\n"
         f"Stock watchlist: {', '.join(stock_symbols)}\n"
         f"Crypto watchlist: {', '.join(crypto_symbols)}\n"
         f"Watchlist signals:\n{sig_lines if sig_lines else '  No signals yet'}"
