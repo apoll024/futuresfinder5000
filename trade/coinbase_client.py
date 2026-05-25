@@ -164,11 +164,15 @@ def get_portfolio_summary() -> dict:
         data    = _req("GET", "/api/v3/brokerage/accounts")
         balances = []
         for acct in data.get("accounts", []):
-            val = float(acct.get("available_balance", {}).get("value", "0") or 0)
-            if val > 0:
+            available = float(acct.get("available_balance", {}).get("value", "0") or 0)
+            hold = float(acct.get("hold", {}).get("value", "0") or 0)
+            total = available + hold
+            if total > 0:
                 balances.append({
                     "currency": acct.get("currency", ""),
-                    "balance":  val,
+                    "balance":  total,
+                    "available_balance": available,
+                    "hold_balance": hold,
                 })
         return {"configured": True, "balances": balances, "broker": "Coinbase Advanced Trade"}
     except Exception as e:
