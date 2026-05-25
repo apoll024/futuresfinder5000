@@ -69,6 +69,33 @@ _HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; FuturesFinder5000-digest/1.0; +https://github.com)"
 }
 
+# ── Agent 2: Sentiment scoring (keyword-based, no NLP deps needed) ─────────────
+_BULL_WORDS = {
+    "bullish", "rally", "surge", "soar", "gain", "gains", "breakout", "recovery",
+    "upside", "upgrade", "buy", "outperform", "strong", "beat", "record", "high",
+    "growth", "profit", "exceed", "rise", "rises", "rising", "positive", "optimistic",
+    "bull", "moon", "pump", "rebound", "support", "bounce",
+}
+_BEAR_WORDS = {
+    "bearish", "crash", "drop", "fall", "decline", "selloff", "sell-off", "slump",
+    "plunge", "loss", "losses", "downgrade", "sell", "underperform", "weak", "miss",
+    "low", "shrink", "contraction", "fear", "uncertainty", "negative", "pessimistic",
+    "bear", "dump", "breakdown", "resistance", "correction", "recession",
+}
+
+def _sentiment_score(text: str) -> float:
+    """
+    Keyword-based sentiment. Returns -1.0 (fully bearish) to +1.0 (fully bullish).
+    Returns 0.0 if no keywords found.
+    """
+    words = re.findall(r"[a-z]+", text.lower())
+    bull  = sum(1 for w in words if w in _BULL_WORDS)
+    bear  = sum(1 for w in words if w in _BEAR_WORDS)
+    total = bull + bear
+    if total == 0:
+        return 0.0
+    return round((bull - bear) / total, 3)
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -97,7 +124,8 @@ def _url_in_kb(url: str) -> bool:
         db.close()
 
 
-def _save_to_kb(title: str, content: str, source_url: str, tags: str) -> bool:
+def _save_to_kb(title: str, content: str, source_url: str, tags: str,
+                sentiment: float = None) -> bool:
     if not content or not content.strip():
         return False
     db = Session()
@@ -107,6 +135,7 @@ def _save_to_kb(title: str, content: str, source_url: str, tags: str) -> bool:
             content=content,
             source_url=(source_url or "")[:600],
             tags=(tags or "")[:300],
+            sentiment=sentiment,
         ))
         db.commit()
         return True
@@ -168,9 +197,10 @@ def ingest_rss_feed(feed_cfg: dict) -> int:
         if not content:
             continue
 
-        if _save_to_kb(title, content, article_url, tags):
+        sentiment = _sentiment_score(title + " " + content[:2000])
+        if _save_to_kb(title, content, article_url, tags, sentiment=sentiment):
             saved += 1
-            print(f"  [digest]   + {title[:70]}…")
+            print(f"  [digest]   + {title[:70]}… [sentiment={sentiment:+.2f}]")
 
     return saved
 

@@ -10,16 +10,16 @@ Alert thresholds: warn >= 80%, critical >= 92%
 All metrics visible in the dashboard via /api/health endpoint.
 """
 import os, sys, subprocess, json, time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from db.models import init_db, Session, HealthMetric
+from db.models import init_db, Session, HealthMetric, Bar, Signal, write_inbox
 
 POLL_INTERVAL      = 300
 WARN_PCT           = 80.0
 CRITICAL_PCT       = 92.0
-WATCHED_CONTAINERS = ["ff_db", "ff_ollama", "ff_ingest", "ff_api", "ff_settler"]
+WATCHED_CONTAINERS = ["ff_db", "ff_api", "ff_settler", "ff_crypto", "ff_digest", "ff_watchdog"]
 
 
 def docker_stats():
@@ -98,8 +98,7 @@ def host_metrics() -> dict:
             disk = 0.0
         return {"cpu": 0.0, "mem": mem, "disk": disk}
 
-
-
+def write_metric(session, mtype, name, value, status, note=None):
     session.add(HealthMetric(
         ts=datetime.utcnow(), metric_type=mtype,
         name=name, value=value, status=status, note=note
@@ -117,6 +116,9 @@ def run_checks():
         write_metric(session, "host", metric, val, status)
         if status != "ok":
             alerts.append(f"{status.upper()}: host {metric} {val:.1f}%")
+
+    # ── Per-container metrics ─────────────────────────────────────────────────
+    for stat in docker_stats():
         name = stat["name"]
         cpu  = stat["cpu_pct"]
         mem  = stat["mem_pct"]
@@ -150,10 +152,58 @@ def run_checks():
 
     ts = datetime.now().strftime("%H:%M:%S")
     if alerts:
+        for a in alerts:
+            write_inbox("alert", f"Health Alert: {a[:100]}", a, source="watchdog")
         print(f"\n[watchdog] === ALERTS {ts} ===")
         for a in alerts: print(f"  {a}")
     else:
         print(f"[watchdog] {ts} OK | disk={d:.1f}% | containers: {len(running & set(WATCHED_CONTAINERS))}/{len(WATCHED_CONTAINERS)}")
+
+
+# ── Agent 1: Data Integrity Monitor ──────────────────────────────────────────
+_integrity_counter = 0
+
+def check_data_integrity():
+    """Agent 1 — detect price-bar gaps and signal anomalies. Runs every 3rd poll (~15 min)."""
+    global _integrity_counter
+    _integrity_counter += 1
+    if _integrity_counter % 3 != 0:
+        return
+
+    try:
+        db = Session()
+        issues = []
+
+        # Check for symbols with no bars in the last 30 minutes (market hours heuristic)
+        cutoff = datetime.utcnow() - timedelta(minutes=30)
+        recent_symbols = {r[0] for r in db.query(Bar.symbol).filter(Bar.ts >= cutoff).distinct()}
+        all_symbols    = {r[0] for r in db.query(Bar.symbol).distinct()}
+        stale = all_symbols - recent_symbols
+        if stale:
+            issues.append(f"No recent bars for: {', '.join(sorted(stale)[:5])}")
+
+        # Check for signals with null confidence or action
+        bad_signals = (
+            db.query(Signal)
+            .filter(Signal.ts >= datetime.utcnow() - timedelta(hours=1))
+            .filter((Signal.action.is_(None)) | (Signal.confidence.is_(None)))
+            .count()
+        )
+        if bad_signals:
+            issues.append(f"{bad_signals} signals missing action/confidence in last hour")
+
+        db.close()
+
+        if issues:
+            write_inbox(
+                "alert",
+                "Data Integrity Issue Detected",
+                "\n".join(issues),
+                source="watchdog",
+            )
+            print(f"[watchdog/agent1] Data integrity issues: {issues}")
+    except Exception as e:
+        print(f"[watchdog/agent1] Integrity check failed: {e}")
 
 
 def run():
@@ -162,6 +212,7 @@ def run():
     while True:
         try:
             run_checks()
+            check_data_integrity()
         except Exception as e:
             print(f"[watchdog] Check failed (non-fatal): {e}")
         time.sleep(POLL_INTERVAL)

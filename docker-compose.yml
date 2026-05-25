@@ -16,20 +16,6 @@ services:
       timeout: 10s
       retries: 5
 
-  ollama:
-    image: ollama/ollama
-    container_name: ff_ollama
-    volumes:
-      - ollama_data:/root/.ollama
-    mem_limit: 8g
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
   ingest:
     build: .
     container_name: ff_ingest
@@ -39,8 +25,9 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=http://ollama:11434/v1/chat/completions
-      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b}
+      - LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+      - LLM_MODEL=${LLM_MODEL:-gemini-3.5-flash}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
     mem_limit: 768m
     depends_on:
@@ -98,8 +85,9 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=http://ollama:11434/v1/chat/completions
-      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b}
+      - LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+      - LLM_MODEL=${LLM_MODEL:-gemini-3.5-flash}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - TRADE_MODE=${TRADE_MODE:-suggest}
       - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
       - MAX_POSITION_USD=${MAX_POSITION_USD:-500}
@@ -115,8 +103,6 @@ services:
     mem_limit: 768m
     depends_on:
       db:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -134,8 +120,9 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=http://ollama:11434/v1/chat/completions
-      - LLM_MODEL=${LLM_MODEL:-llama3.1:8b}
+      - LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+      - LLM_MODEL=${LLM_MODEL:-gemini-3.5-flash}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - CRYPTO_SYMBOLS=${CRYPTO_SYMBOLS:-BTC/USD,ETH/USD,SOL/USD}
       - COINGECKO_API_KEY=${COINGECKO_API_KEY:-}
       - WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY:-}
@@ -146,10 +133,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      ollama:
-        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   pgdata:
-  ollama_data:

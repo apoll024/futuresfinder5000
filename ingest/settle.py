@@ -11,13 +11,13 @@ Learning loop:
   Signal generated → acted_on=True → EOD settlement → outcome_pct / was_correct
   → weekly XGBoost training run → model replaces LLM for signal generation
 """
-import os, sys, time
-from datetime import datetime, date, time as dtime
+import os, sys, time, threading
+from datetime import datetime, date, time as dtime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from db.models import Session, Signal, Bar, KnowledgeItem, init_db
+from db.models import Session, Signal, Trade, Bar, KnowledgeItem, init_db, write_inbox
 
 ET          = ZoneInfo("America/New_York")
 SETTLE_TIME = dtime(16, 15)   # 15 min after market close — all final bars should be recorded
@@ -126,6 +126,17 @@ def _write_eod_summary(trade_date: date, signals: list, win_rate: float):
     finally:
         session.close()
 
+    # Agent 5: write EOD digest to inbox
+    settled = [s for s in signals if s.was_correct is not None]
+    wins    = [s for s in settled if s.was_correct]
+    write_inbox(
+        "update",
+        f"EOD Summary {trade_date}: {win_rate:.0f}% win rate",
+        f"{len(settled)} signals settled | {len(wins)} wins | "
+        f"Win rate: {win_rate:.1f}%\n\n" + content,
+        source="settler",
+    )
+
 
 def wait_until(target: dtime):
     now = datetime.now(ET)
@@ -136,9 +147,57 @@ def wait_until(target: dtime):
         time.sleep(delta)
 
 
+def check_execution_gaps():
+    """Agent 4 — verify every acted_on signal has a matching Trade. Runs every 15 min."""
+    try:
+        db = Session()
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        acted_signals = (
+            db.query(Signal.id, Signal.symbol, Signal.action, Signal.ts)
+            .filter(Signal.acted_on == True, Signal.ts >= cutoff)
+            .all()
+        )
+        if not acted_signals:
+            db.close()
+            return
+
+        trade_sig_ids = {t[0] for t in db.query(Trade.signal_id).filter(
+            Trade.ts >= cutoff, Trade.signal_id.isnot(None)
+        ).all()}
+        db.close()
+
+        gaps = [s for s in acted_signals if s.id not in trade_sig_ids]
+        if gaps:
+            detail = "\n".join(
+                f"  Signal {s.id}: {s.symbol} {s.action} @ {s.ts}" for s in gaps[:10]
+            )
+            write_inbox(
+                "alert",
+                f"Trade execution gaps detected: {len(gaps)} signal(s) unmatched",
+                f"{len(gaps)} acted-on signal(s) have no matching Trade record in the last 24h.\n{detail}",
+                source="settler",
+            )
+            print(f"[settler/agent4] {len(gaps)} execution gap(s) detected")
+    except Exception as e:
+        print(f"[settler/agent4] Execution gap check failed: {e}")
+
+
+def _execution_monitor_loop():
+    """Background thread — runs Agent 4 every 15 minutes."""
+    while True:
+        time.sleep(900)
+        check_execution_gaps()
+
+
 def run():
     print("[settler] EOD Settlement service started")
     init_db()
+
+    # Start Agent 4 execution monitor in background
+    t = threading.Thread(target=_execution_monitor_loop, daemon=True)
+    t.start()
+    print("[settler] Agent 4 (execution monitor) thread started")
+
     while True:
         wait_until(SETTLE_TIME)
         today = datetime.now(ET).date()

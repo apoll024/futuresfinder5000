@@ -17,21 +17,23 @@ except ImportError:
 
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context, session, redirect, url_for
 from sqlalchemy import func, text
-from db.models import init_db, Session, Bar, Signal, Trade, HealthMetric, KnowledgeItem, LLMSession, get_setting, set_setting
+from db.models import (
+    init_db, Session, Bar, Signal, Trade, HealthMetric, KnowledgeItem,
+    LLMSession, get_setting, set_setting, AIMessage, write_inbox,
+)
 
 app           = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "ff5k-change-me-in-prod-32bytes!!")
 ET            = ZoneInfo("America/New_York")
-LLM_API_URL   = os.getenv("LLM_API_URL",  "http://ollama:11434/v1/chat/completions")
-LLM_MODEL     = os.getenv("LLM_MODEL",    "llama3.2:3b")
-GITHUB_TOKEN  = os.getenv("GITHUB_TOKEN", "")
+LLM_API_URL   = os.getenv("LLM_API_URL",  "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+LLM_MODEL     = os.getenv("LLM_MODEL",    "gemini-3.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 
 def _llm_headers() -> dict:
     h = {"Content-Type": "application/json"}
-    if GITHUB_TOKEN:
-        h["Authorization"] = f"Bearer {GITHUB_TOKEN}"
-        h["Copilot-Integration-Id"] = "vscode-chat"
+    if GEMINI_API_KEY:
+        h["Authorization"] = f"Bearer {GEMINI_API_KEY}"
     return h
 
 # Auth credentials — stored as SHA-256 hashes; set via env or use defaults
@@ -81,13 +83,14 @@ def logout():
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def ollama_healthy() -> bool:
+    """Returns True if the LLM endpoint is reachable and accepting requests."""
     try:
-        if GITHUB_TOKEN:
-            r = requests.post(LLM_API_URL, headers=_llm_headers(),
-                              json={"model": LLM_MODEL, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
-                              timeout=5)
-            return r.ok
-        r = requests.get(LLM_API_URL.replace("/v1/chat/completions", "/api/tags"), timeout=3)
+        r = requests.post(
+            LLM_API_URL, headers=_llm_headers(),
+            json={"model": LLM_MODEL, "messages": [{"role": "user", "content": "ping"}],
+                  "max_tokens": 1},
+            timeout=8,
+        )
         return r.ok
     except Exception:
         return False
@@ -1032,6 +1035,169 @@ def api_stats_reset():
         db.close()
 
 
+# ── API: AI Inbox ─────────────────────────────────────────────────────────────
+
+@app.route("/api/inbox")
+@login_required
+def api_inbox():
+    db = Session()
+    try:
+        msgs = (db.query(AIMessage)
+                .order_by(AIMessage.ts.desc())
+                .limit(100)
+                .all())
+        return jsonify([{
+            "id":       m.id,
+            "ts":       m.ts.isoformat() if m.ts else None,
+            "category": m.category,
+            "title":    m.title,
+            "body":     m.body,
+            "source":   m.source,
+            "read":     m.read,
+        } for m in msgs])
+    finally:
+        db.close()
+
+
+@app.route("/api/inbox/unread-count")
+@login_required
+def api_inbox_unread_count():
+    db = Session()
+    try:
+        n = db.query(AIMessage).filter(AIMessage.read == False).count()
+        return jsonify({"count": n})
+    finally:
+        db.close()
+
+
+@app.route("/api/inbox/mark-read", methods=["POST"])
+@login_required
+def api_inbox_mark_read():
+    db = Session()
+    try:
+        db.query(AIMessage).filter(AIMessage.read == False).update({"read": True})
+        db.commit()
+        return jsonify({"status": "ok"})
+    finally:
+        db.close()
+
+
+@app.route("/api/inbox/clear", methods=["POST"])
+@login_required
+def api_inbox_clear():
+    db = Session()
+    try:
+        deleted = db.query(AIMessage).delete()
+        db.commit()
+        return jsonify({"status": "ok", "deleted": deleted})
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+
+@app.route("/api/inbox/write", methods=["POST"])
+def api_inbox_write():
+    """Internal endpoint — allows agents/scripts to write inbox messages without login."""
+    data     = request.get_json(silent=True) or {}
+    category = data.get("category", "update")[:20]
+    title    = (data.get("title") or "")[:200]
+    body     = data.get("body") or ""
+    source   = (data.get("source") or "api")[:50]
+    if not title or not body:
+        return jsonify({"error": "title and body required"}), 400
+    write_inbox(category, title, body, source)
+    return jsonify({"status": "ok"})
+
+
+# ── API: Analytics (Agent 7) ──────────────────────────────────────────────────
+
+@app.route("/api/analytics")
+@login_required
+def api_analytics():
+    db  = Session()
+    try:
+        today    = date.today()
+        cutoff7  = datetime.utcnow() - timedelta(days=7)
+        cutoff30 = datetime.utcnow() - timedelta(days=30)
+
+        # All-time settled totals
+        all_settled = (db.query(Signal)
+                       .filter(Signal.settled == True, Signal.outcome_pct.isnot(None))
+                       .all())
+        total   = len(all_settled)
+        wins    = [s for s in all_settled if s.outcome_pct > 0]
+        losses  = [s for s in all_settled if s.outcome_pct <= 0]
+        win_rate_all = round(len(wins) / total * 100, 1) if total else 0
+        avg_win_all  = round(sum(s.outcome_pct for s in wins)   / len(wins),   3) if wins   else 0
+        avg_loss_all = round(sum(s.outcome_pct for s in losses) / len(losses), 3) if losses else 0
+
+        # 7-day window
+        sigs7   = [s for s in all_settled if s.ts and s.ts >= cutoff7]
+        wins7   = [s for s in sigs7 if s.outcome_pct > 0]
+        wr7     = round(len(wins7) / len(sigs7) * 100, 1) if sigs7 else 0
+
+        # Per-symbol breakdown (30 days)
+        sigs30  = [s for s in all_settled if s.ts and s.ts >= cutoff30]
+        by_sym: dict = {}
+        for s in sigs30:
+            e = by_sym.setdefault(s.symbol, {"trades": 0, "wins": 0, "pct": 0.0})
+            e["trades"]  += 1
+            e["wins"]    += 1 if s.outcome_pct > 0 else 0
+            e["pct"]      = round(e["pct"] + s.outcome_pct, 3)
+        for sym, e in by_sym.items():
+            e["win_rate"] = round(e["wins"] / e["trades"] * 100, 1)
+
+        # News sentiment aggregate (7 days)
+        from sqlalchemy import func as sqlfunc
+        sent_q = (db.query(sqlfunc.avg(KnowledgeItem.sentiment))
+                    .filter(KnowledgeItem.ts >= cutoff7,
+                            KnowledgeItem.sentiment.isnot(None))
+                    .scalar())
+        avg_sentiment = round(float(sent_q), 3) if sent_q is not None else None
+
+        # Daily P&L series (30 days)
+        from collections import defaultdict
+        daily: dict = defaultdict(float)
+        for s in sigs30:
+            if s.ts:
+                key = s.ts.strftime("%Y-%m-%d")
+                daily[key] = round(daily[key] + s.outcome_pct, 3)
+        daily_series = [{"date": k, "pct": v} for k, v in sorted(daily.items())]
+
+        return jsonify({
+            "all_time": {
+                "total": total, "wins": len(wins), "losses": len(losses),
+                "win_rate": win_rate_all, "avg_win_pct": avg_win_all,
+                "avg_loss_pct": avg_loss_all,
+                "total_pct": round(sum(s.outcome_pct for s in all_settled), 3),
+            },
+            "last_7d":    {"trades": len(sigs7), "wins": len(wins7), "win_rate": wr7},
+            "by_symbol":  by_sym,
+            "avg_sentiment_7d": avg_sentiment,
+            "daily":      daily_series,
+        })
+    finally:
+        db.close()
+
+
+# ── API: Backtest (Agent 3) ────────────────────────────────────────────────────
+
+@app.route("/api/backtest/run", methods=["POST"])
+@login_required
+def api_backtest_run():
+    data   = request.get_json(silent=True) or {}
+    symbol = data.get("symbol") or None
+    days   = int(data.get("days", 30))
+    try:
+        from analyze.backtest import run_backtest
+        result = run_backtest(symbol=symbol, days=days)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── API: holdings / liquidation ───────────────────────────────────────────────
 
 @app.route("/api/positions")
@@ -1468,7 +1634,7 @@ def build_chat_context() -> str:
         f"Crypto: {'ENABLED' if get_crypto_enabled() else 'DISABLED'}\n"
         f"News digest last run: {get_setting('news_digest_last_run', 'Never')}\n"
         f"Ingest: {'running' if ingest_st.get('running') else 'stopped'} | "
-        f"Ollama: {'ok' if ollama_healthy() else 'OFFLINE'}\n"
+        f"LLM (Gemini): {'ok' if ollama_healthy() else 'OFFLINE'}\n"
         f"Today — P&L: ${stats['pnl']} | "
         f"Trades: {stats['trades_today']} (B={stats['buys']} S={stats['sells']}) | "
         f"Signals: {stats['signals_today']}\n"
@@ -1651,6 +1817,123 @@ def api_chat():
                              "Cache-Control": "no-cache"})
 
 
+# ── Startup: seed agent reference guide into KB ───────────────────────────────
+
+_REFERENCE_GUIDE = """
+=== FF5000 AGENT REFERENCE GUIDE ===
+
+FuturesFinder5000 has 7 autonomous agents that run continuously or on-demand.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENT 1 — DATA INTEGRITY MONITOR
+Service: watchdog | Interval: every 15 min (every 3rd 5-min poll)
+What it does:
+  • Detects symbols with no price bar data in the last 30 minutes
+  • Catches signals missing action or confidence in the last hour
+  • Writes alert to AI inbox when issues are found
+How to use: Runs automatically. Check inbox for "Data Integrity Issue" messages.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENT 2 — NEWS SENTIMENT ANALYZER
+Service: digest | Interval: crypto 5 min / market 7am+noon ET
+What it does:
+  • Scores every news article from -1.0 (bearish) to +1.0 (bullish)
+  • Uses bull/bear keyword matching (no external NLP dependency)
+  • Score stored in knowledge_items.sentiment column
+  • Aggregate visible in /api/analytics → avg_sentiment_7d
+How to use: Sentiment is injected into AI context automatically via KB queries.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENT 3 — BACKTESTER
+Service: api (on-demand only)
+Endpoint: POST /api/backtest/run
+Body: {"symbol": "BTC/USD", "days": 30}   (symbol and days are optional)
+What it does:
+  • Replays settled, acted-on signals from the DB over the requested window
+  • Returns: win_rate, avg_win/loss %, total %, Sharpe ratio
+  • Per-symbol breakdown + daily P&L series
+  • Writes result summary to AI inbox after each run
+How to use: Click "Run Backtest" on dashboard or POST to endpoint.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENT 4 — TRADE EXECUTION MONITOR
+Service: settler | Interval: every 15 min (background thread)
+What it does:
+  • Checks for acted_on signals in last 24h with no matching Trade record
+  • Writes "Trade execution gaps detected" alert to inbox if mismatches found
+How to use: Runs automatically. Check inbox for execution gap alerts.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENT 5 — EOD CLEANUP / SETTLEMENT
+Service: settler | Schedule: 16:15 ET Monday–Friday
+What it does:
+  • Settles all acted-on signals by comparing entry vs closing bar price
+  • Calculates outcome_pct and was_correct for each signal
+  • Writes EOD summary to knowledge base AND AI inbox
+  • Provides labeled dataset for future XGBoost model training
+How to use: Runs automatically at EOD. Check inbox for daily summaries.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENT 6 — CRYPTO DATA MONITOR
+Service: crypto (continuous 24/7)
+What it does:
+  • Monitors USDC balance — inbox alert when < $50
+  • Monitors rolling win rate — inbox alert when < 40%
+  • Both alerts are throttled (max once per 4–6 hours)
+How to use: Runs automatically. Check inbox for resource/warning messages.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AGENT 7 — PERFORMANCE ANALYTICS DASHBOARD
+Service: api (on-demand)
+Endpoint: GET /api/analytics
+What it returns:
+  • all_time: total/wins/losses/win_rate/avg_win/avg_loss/total_pct
+  • last_7d: trades/wins/win_rate
+  • by_symbol: per-symbol win rate and total pct (30-day window)
+  • avg_sentiment_7d: average news sentiment score (-1 to +1)
+  • daily: daily P&L % series (30 days)
+How to use: Click "Analytics" in dashboard sidebar, or GET /api/analytics.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AI INBOX
+Endpoint: GET /api/inbox
+Clear: POST /api/inbox/clear
+Mark read: POST /api/inbox/mark-read
+Write (internal): POST /api/inbox/write {"category","title","body","source"}
+Categories: update, alert, warning, resource, info
+
+Context partition: Crypto AI only sees crypto (symbol contains "/").
+                   Stocks AI only sees stock signals (symbol without "/").
+=== END REFERENCE GUIDE ===
+"""
+
+def _seed_reference_guide():
+    """Upsert the agent reference guide into the knowledge base on startup."""
+    db = Session()
+    try:
+        existing = db.query(KnowledgeItem).filter(
+            KnowledgeItem.tags.like("%REFERENCE%")
+        ).first()
+        if existing:
+            existing.content    = _REFERENCE_GUIDE
+            existing.updated_at = datetime.utcnow() if hasattr(existing, "updated_at") else None
+        else:
+            db.add(KnowledgeItem(
+                title="FF5000 Agent Reference Guide",
+                content=_REFERENCE_GUIDE,
+                source_url="",
+                tags="AGENTS,REFERENCE,SYSTEM",
+            ))
+        db.commit()
+        print("[api] Agent reference guide seeded to KB")
+    except Exception as e:
+        db.rollback()
+        print(f"[api] Reference guide seed failed: {e}")
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     init_db()
+    _seed_reference_guide()
     app.run(host="0.0.0.0", port=5001, debug=False)

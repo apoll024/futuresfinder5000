@@ -1,7 +1,8 @@
 """
 Database schema and helpers.
 Tables: bars (OHLCV), signals (LLM analysis + outcomes), trades, settings, health_metrics,
-        llm_sessions (full AI call log), chat_messages (advisor conversation history)
+        llm_sessions (full AI call log), chat_messages (advisor conversation history),
+        ai_messages (persistent agent-to-user inbox)
 """
 import os
 from datetime import datetime
@@ -104,6 +105,19 @@ class KnowledgeItem(Base):
     content    = Column(Text, nullable=False)
     tags       = Column(String(300))   # comma-separated symbols / topics
     ts         = Column(DateTime, default=datetime.utcnow, index=True)
+    sentiment  = Column(Float)         # -1.0 (bearish) to +1.0 (bullish), scored by digest agent
+
+
+class AIMessage(Base):
+    """Persistent AI-to-user inbox — messages written by autonomous agents between sessions."""
+    __tablename__ = "ai_messages"
+    id       = Column(Integer, primary_key=True, autoincrement=True)
+    ts       = Column(DateTime, default=datetime.utcnow, index=True)
+    category = Column(String(20))    # trade | resource | update | alert | warning | info
+    title    = Column(String(200), nullable=False)
+    body     = Column(Text)
+    read     = Column(Boolean, default=False)
+    source   = Column(String(50))    # watchdog | settler | crypto | digest | backtest | analyzer
 
 
 class LLMSession(Base):
@@ -130,6 +144,22 @@ class ChatMessage(Base):
     service      = Column(String(20))               # advisor | review | chat
     role         = Column(String(10))               # user | assistant | system
     content      = Column(Text)
+
+
+def write_inbox(category: str, title: str, body: str, source: str = "system") -> None:
+    """Fire-and-forget: write a message to the AI inbox. Silently ignores errors."""
+    try:
+        db = Session()
+        db.add(AIMessage(
+            category=category[:20],
+            title=title[:200],
+            body=body,
+            source=source[:50],
+        ))
+        db.commit()
+        db.close()
+    except Exception:
+        pass
 
 
 def log_llm_session(service: str, model: str, prompt: str, response: str,
@@ -182,6 +212,7 @@ def init_db():
         ("llm_sessions", "action",     "VARCHAR(10)"),
         ("llm_sessions", "confidence", "FLOAT"),
         ("llm_sessions", "latency_ms", "INTEGER"),
+        ("knowledge",    "sentiment",  "FLOAT"),
     ]
     try:
         with engine.begin() as conn:

@@ -21,7 +21,52 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from db.models import Session, Signal, Trade, LLMSession, KnowledgeItem
+from db.models import Session, Signal, Trade, LLMSession, KnowledgeItem, write_inbox
+
+# ── Agent registry (injected into AI context so it knows its own capabilities) ─
+
+AGENT_REFERENCE = """
+=== FF5000 AGENT REGISTRY ===
+You have 7 specialized agents running alongside you. Reference this when asked about capabilities.
+
+AGENT 1 — DATA INTEGRITY MONITOR (watchdog, every 5 min)
+  Detects price bar gaps, missing data, schema issues. Writes alert to inbox when problems found.
+
+AGENT 2 — NEWS SENTIMENT ANALYZER (digest service, 5-min crypto / 7am+noon stocks)
+  Scores each news article -1.0 (bearish) to +1.0 (bullish) using keyword analysis.
+  Sentiment stored on every KnowledgeItem. Aggregated in /api/analytics.
+
+AGENT 3 — BACKTESTER (on-demand via /api/backtest/run)
+  Replays settled signals, computes win rate, avg gain/loss, Sharpe ratio, per-symbol breakdown.
+  Writes result summary to inbox after each run.
+
+AGENT 4 — TRADE EXECUTION MONITOR (settler service, every 15 min)
+  Checks for acted_on signals with no matching Trade record. Inbox alert if gaps found.
+
+AGENT 5 — EOD CLEANUP (settler service, 16:15 ET weekdays)
+  Settles outcomes, computes daily P&L + win rate, writes EOD summary to KB and inbox.
+
+AGENT 6 — CRYPTO DATA MONITOR (crypto service, continuous 24/7)
+  Monitors USDC balance and win rate. Inbox alert when USDC < $50 or win rate < 40%.
+
+AGENT 7 — PERFORMANCE ANALYTICS (api service, on-demand)
+  Aggregates daily P&L, win rate by symbol, signal accuracy trends. See /api/analytics.
+=== END AGENT REGISTRY ===
+"""
+
+# ── Inbox throttle: avoid spamming the same warning repeatedly ─────────────────
+_inbox_last_written: dict = {}   # title → datetime
+
+def _inbox_throttled(category: str, title: str, body: str, source: str,
+                     hours: float = 2.0) -> None:
+    """Write to inbox at most once per `hours` for a given title."""
+    now = datetime.utcnow()
+    last = _inbox_last_written.get(title)
+    if last and (now - last).total_seconds() < hours * 3600:
+        return
+    _inbox_last_written[title] = now
+    write_inbox(category, title, body, source)
+
 
 # ── Standing system instructions ─────────────────────────────────────────────
 
@@ -110,6 +155,15 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
     cutoff_5m = datetime.utcnow() - timedelta(minutes=5)
     cutoff_1h = datetime.utcnow() - timedelta(hours=1)
 
+    # ── Service partition: crypto sees only crypto symbols, stocks sees only stocks ──
+    is_crypto = service == "crypto"
+    def _sym_filter(q, model):
+        """Restrict query to the correct asset class."""
+        if is_crypto:
+            return q.filter(model.symbol.like("%/%"))
+        else:
+            return q.filter(~model.symbol.like("%/%"))
+
     try:
         # 1. Recent signals for this symbol (last 5, newest first)
         recent_signals = (
@@ -177,15 +231,15 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
         else:
             lines.append(f"\nTODAY'S TRADES: none yet for {symbol}.")
 
-        # 3. Daily P&L (all symbols)
-        all_today_trades = (
+        # 3. Daily P&L (same asset class only)
+        all_today_trades_q = (
             db.query(Trade)
             .filter(
                 Trade.ts >= datetime.strptime(today_str, "%Y-%m-%d"),
                 Trade.status == "filled",
             )
-            .all()
         )
+        all_today_trades = _sym_filter(all_today_trades_q, Trade).all()
         bought_usd = sum(t.price * (t.qty or 0) for t in all_today_trades if t.side == "buy")
         sold_usd   = sum(t.price * (t.qty or 0) for t in all_today_trades if t.side == "sell")
         daily_pnl  = sold_usd - bought_usd
@@ -239,6 +293,15 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
                     lines.append(
                         "  ⚠ Win rate below 40% — be selective. Only act on high-confidence setups (>0.80)."
                     )
+                    _inbox_throttled(
+                        "warning",
+                        f"Low win rate on {symbol}: {win_rate:.0f}%",
+                        f"Last {len(settled_signals)} settled signals: {len(wins)}W/{len(losses)}L. "
+                        f"Avg win: +{avg_win:.2f}% | Avg loss: {avg_loss:.2f}%. "
+                        "Confidence threshold raised automatically.",
+                        source="analyzer",
+                        hours=4.0,
+                    )
                 elif win_rate >= 65:
                     lines.append("  ✓ Win rate healthy — strategy is working.")
         except Exception:
@@ -252,6 +315,13 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
                     lines.append(f"\nAVAILABLE CAPITAL: ${usdc:,.2f} USDC")
                     if usdc < 50:
                         lines.append("  ⚠ Low balance — consider smaller position sizes or skip buys.")
+                        _inbox_throttled(
+                            "resource",
+                            f"Low USDC balance: ${usdc:.2f}",
+                            f"Available USDC is ${usdc:.2f}. Deposit more to enable crypto buys.",
+                            source="crypto",
+                            hours=6.0,
+                        )
                 else:
                     lines.append("\nAVAILABLE CAPITAL: (unavailable — Coinbase SDK not configured)")
             except Exception:
@@ -279,4 +349,5 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
         db.close()
 
     lines.append("=== END DB CONTEXT SNAPSHOT ===\n")
+    lines.append(AGENT_REFERENCE)
     return "\n".join(lines)

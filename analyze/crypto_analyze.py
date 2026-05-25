@@ -27,9 +27,9 @@ import ta.volatility as ta_vol
 from db.models import Session, Bar, Signal, get_setting, log_llm_session
 from analyze.ai_context import SYSTEM_INSTRUCTIONS, build_db_context
 
-LLM_API_URL    = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
-LLM_MODEL      = os.getenv("LLM_MODEL",   "llama3.2:3b")
-GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
+LLM_API_URL    = os.getenv("LLM_API_URL", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+LLM_MODEL      = os.getenv("LLM_MODEL",   "gemini-3.5-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Optional CoinGecko Demo API key — raises rate limit from 30 to 500 req/min
 # Get free key at https://www.coingecko.com/en/api
@@ -57,9 +57,8 @@ _BINANCE_SYM = {
 
 def _llm_headers() -> dict:
     h = {"Content-Type": "application/json"}
-    if GITHUB_TOKEN:
-        h["Authorization"] = f"Bearer {GITHUB_TOKEN}"
-        h["Copilot-Integration-Id"] = "vscode-chat"
+    if GEMINI_API_KEY:
+        h["Authorization"] = f"Bearer {GEMINI_API_KEY}"
     return h
 
 
