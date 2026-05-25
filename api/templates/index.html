@@ -2048,6 +2048,7 @@ async function loadAnalytics() {
   const el = document.getElementById('analytics-body');
   if (!el) return;
   el.innerHTML = '<p style="color:var(--muted)">Loading analytics…</p>';
+  try {
     const r = await fetch('/api/analytics');
     const d = await r.json();
     const at = d.all_time || {};
