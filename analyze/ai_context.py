@@ -12,9 +12,11 @@ Sections injected into each prompt:
        • Today's trades for this symbol
        • Last 3 LLM session reasoning entries for this symbol
        • Daily P&L and daily loss halt status
+       • Signal outcome accuracy (last 10 acted-on signals with outcomes)
+       • Available USDC capital (Coinbase balance, crypto only)
        • Relevant knowledge base items (tagged with symbol or "crypto")
 """
-import sys, json
+import os, sys, json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -41,7 +43,10 @@ MANDATORY PRE-ACTION CHECKLIST (verify against DB Context):
   4. PRIOR REASONING   — Review your last 3 reasoning entries for this symbol.
                          Are you repeating a signal that previously failed?
                          Do not chase the same wrong call twice.
-  5. KNOWLEDGE BASE    — Any relevant market notes or EOD summaries? Apply them.
+  5. OUTCOME ACCURACY  — Review your recent win/loss rate. If win rate < 40%,
+                         raise confidence threshold — only act on strong setups.
+  6. AVAILABLE CAPITAL — Never exceed available USDC balance when sizing buys.
+  7. KNOWLEDGE BASE    — Any relevant market notes or EOD summaries? Apply them.
 
 RISK RULES (non-negotiable):
   • Never issue 'buy' when already long — no pyramiding
@@ -51,6 +56,40 @@ RISK RULES (non-negotiable):
   • Daily loss halt: if P&L ≤ −$200, signal HOLD on everything
 === END STANDING INSTRUCTIONS ===
 """.strip()
+
+
+# ── Available capital fetcher (Coinbase) ──────────────────────────────────────
+
+def fetch_available_usdc() -> float | None:
+    """
+    Query Coinbase SDK for available USDC balance.
+    Returns float dollars or None if unavailable / not configured.
+    """
+    try:
+        from coinbase.rest import RESTClient
+        api_key    = os.getenv("COINBASE_API_KEY", "")
+        api_secret = os.getenv("COINBASE_API_SECRET", "")
+        if not api_key or not api_secret:
+            return None
+        client   = RESTClient(api_key=api_key, api_secret=api_secret)
+        accounts = client.get_accounts()
+        for acct in (accounts.accounts or []):
+            currency = ""
+            if hasattr(acct, "currency"):
+                currency = acct.currency
+            elif isinstance(acct, dict):
+                currency = acct.get("currency", "")
+            if currency == "USDC":
+                bal = None
+                if hasattr(acct, "available_balance"):
+                    bal = acct.available_balance
+                elif isinstance(acct, dict):
+                    bal = (acct.get("available_balance") or {}).get("value")
+                if bal is not None:
+                    return float(bal)
+    except Exception:
+        pass
+    return None
 
 
 # ── DB context fetcher ────────────────────────────────────────────────────────
@@ -128,7 +167,6 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
                     f"{t.side.upper()} {t.qty} @ ${t.price:.2f}  "
                     f"status={t.status}  mode={t.mode}"
                 )
-            # Derive open/flat from buys vs sells
             bought_qty = sum(t.qty for t in today_trades if t.side == "buy" and t.status in ("filled", "suggested"))
             sold_qty   = sum(t.qty for t in today_trades if t.side == "sell" and t.status in ("filled", "suggested"))
             net_qty    = bought_qty - sold_qty
@@ -172,7 +210,54 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
                     f"    response: {(entry.response or '')[:200]}"
                 )
 
-        # 5. Knowledge base items relevant to this symbol
+        # 5. Signal outcome accuracy (last 10 acted-on signals with settled outcomes)
+        try:
+            settled_signals = (
+                db.query(Signal)
+                .filter(
+                    Signal.symbol == symbol,
+                    Signal.acted_on == True,
+                    Signal.outcome_pct.isnot(None),
+                )
+                .order_by(Signal.ts.desc())
+                .limit(10)
+                .all()
+            )
+            if settled_signals:
+                wins   = [s for s in settled_signals if s.outcome_pct > 0]
+                losses = [s for s in settled_signals if s.outcome_pct <= 0]
+                win_rate   = len(wins) / len(settled_signals) * 100
+                avg_win    = sum(s.outcome_pct for s in wins)   / len(wins)   if wins   else 0
+                avg_loss   = sum(s.outcome_pct for s in losses) / len(losses) if losses else 0
+                lines.append(
+                    f"\nOUTCOME ACCURACY (last {len(settled_signals)} acted-on trades): "
+                    f"{len(wins)}W / {len(losses)}L  "
+                    f"win rate: {win_rate:.0f}%  "
+                    f"avg win: +{avg_win:.2f}%  avg loss: {avg_loss:.2f}%"
+                )
+                if win_rate < 40:
+                    lines.append(
+                        "  ⚠ Win rate below 40% — be selective. Only act on high-confidence setups (>0.80)."
+                    )
+                elif win_rate >= 65:
+                    lines.append("  ✓ Win rate healthy — strategy is working.")
+        except Exception:
+            pass  # outcome accuracy is optional
+
+        # 6. Available capital (crypto only)
+        if service == "crypto":
+            try:
+                usdc = fetch_available_usdc()
+                if usdc is not None:
+                    lines.append(f"\nAVAILABLE CAPITAL: ${usdc:,.2f} USDC")
+                    if usdc < 50:
+                        lines.append("  ⚠ Low balance — consider smaller position sizes or skip buys.")
+                else:
+                    lines.append("\nAVAILABLE CAPITAL: (unavailable — Coinbase SDK not configured)")
+            except Exception:
+                pass
+
+        # 7. Knowledge base items relevant to this symbol
         base = symbol.split("/")[0]  # e.g. "BTC" from "BTC/USD"
         kb_items = (
             db.query(KnowledgeItem)
