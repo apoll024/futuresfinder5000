@@ -380,6 +380,15 @@
     .coin-rank  { font-size: 8px; color: var(--muted); width: 12px; text-align: right; flex-shrink: 0; }
     .coin-sym   { font-size: 11px; font-weight: 900; width: 32px; color: var(--purple3); flex-shrink: 0; }
     .coin-name  { font-size: 9px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .trade-filter-row {
+      display: flex; align-items: center; justify-content: flex-end; gap: 7px;
+      margin-bottom: 8px; color: var(--muted); font-size: 10px;
+    }
+    .trade-filter-row label { text-transform: uppercase; letter-spacing: .8px; font-weight: 800; }
+    .trade-filter-row select {
+      background: var(--bg); color: var(--text); border: 1px solid var(--border2);
+      border-radius: 5px; padding: 3px 7px; font-size: 10px;
+    }
     .coin-price { font-size: 11px; font-weight: 700; flex-shrink: 0; }
     .coin-chg   { font-size: 10px; font-weight: 700; width: 46px; text-align: right; flex-shrink: 0; }
     .coin-chg.up   { color: var(--green2); }
@@ -448,10 +457,12 @@
       height: min(740px, calc(100vh - 150px));
       min-height: 560px;
       background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      overflow: hidden;
     }
     .chat-messages {
-      flex: 1; overflow-y: auto; padding: 10px;
+      flex: 1 1 auto; min-height: 0; max-height: 100%; overflow-y: auto; padding: 10px;
       display: flex; flex-direction: column; gap: 8px; scroll-behavior: smooth;
+      overscroll-behavior: contain; scrollbar-gutter: stable;
     }
     .msg { max-width: 96%; line-height: 1.55; font-size: 11px; border-radius: 7px; padding: 8px 11px; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
     .msg.user {
@@ -817,6 +828,15 @@
     </div>
     <div id="trades-body" class="collapsible">
       <div class="section" style="padding-top:10px;">
+        <div class="trade-filter-row">
+          <label for="trade-filter">Show</label>
+          <select id="trade-filter" onchange="setTradeFilter(this.value)">
+            <option value="buys-sells" selected>Buys &amp; sells</option>
+            <option value="buy">Buys only</option>
+            <option value="sell">Sells only</option>
+            <option value="all">All entries</option>
+          </select>
+        </div>
         <table id="trades-table">
           <thead>
             <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Value</th><th>Mode</th><th>Status</th></tr>
@@ -1251,6 +1271,12 @@ function closeAiPanel() { document.getElementById('ai-review-panel').classList.r
 // ════════════════════════════════════════════════════════════════════════════
 const _chatHistory = [];
 
+function scrollChatToBottom() {
+  const box = document.getElementById('chat-messages');
+  if (!box) return;
+  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
+}
+
 function autoResize(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 80) + 'px';
@@ -1270,7 +1296,7 @@ function appendMsg(role, text, streaming=false) {
   span.textContent = text;
   div.appendChild(span);
   box.appendChild(div);
-  box.scrollTop = box.scrollHeight;
+  scrollChatToBottom();
   return span;
 }
 
@@ -1323,7 +1349,7 @@ async function sendChat() {
           if (obj.error)   fullText += '\n⚠ ' + obj.error;
           if (obj.content) fullText += obj.content;
           span.textContent = fullText;
-          document.getElementById('chat-messages').scrollTop = 99999;
+          scrollChatToBottom();
         } catch(e) {}
       }
     }
@@ -1398,23 +1424,48 @@ async function kbDelete(id) {
 }
 
 
+let _lastTrades = [];
+let _tradeLogFilter = 'buys-sells';
+
+function setTradeFilter(value) {
+  _tradeLogFilter = value || 'buys-sells';
+  renderTrades(_lastTrades);
+}
+
+function tradeVisible(t) {
+  const side = String(t?.side || '').toLowerCase();
+  if (_tradeLogFilter === 'all') return true;
+  if (_tradeLogFilter === 'buy') return side === 'buy';
+  if (_tradeLogFilter === 'sell') return side === 'sell';
+  return side === 'buy' || side === 'sell';
+}
+
+function renderTrades(trades) {
+  const tbody = document.getElementById('trades-body-inner');
+  if (!tbody) return;
+  const visible = (Array.isArray(trades) ? trades : []).filter(tradeVisible);
+  if (visible.length) {
+    tbody.innerHTML = visible.map(t => `
+      <tr>
+        <td>${t.ts}</td><td><strong>${escHtml(t.symbol)}</strong></td>
+        <td class="td-${t.side}">${String(t.side || '').toUpperCase()}</td>
+        <td>${t.qty}</td><td>$${t.price}</td><td>$${t.value}</td>
+        <td class="td-${t.mode}">${t.mode}</td>
+        <td class="td-${t.status}">${t.status}</td>
+      </tr>`).join('');
+  } else {
+    const msg = _tradeLogFilter === 'buys-sells'
+      ? 'No buy/sell trades yet. Change filter to All entries to see other log rows.'
+      : 'No trades match the selected filter.';
+    tbody.innerHTML = `<tr><td colspan="8" class="no-data">${msg}</td></tr>`;
+  }
+}
+
 async function loadTrades() {
   try {
     const trades = await fetch('/api/trades').then(r=>r.json());
-    const tbody = document.getElementById('trades-body-inner');
-    if (!tbody) return;
-    if (trades.length) {
-      tbody.innerHTML = trades.map(t => `
-        <tr>
-          <td>${t.ts}</td><td><strong>${t.symbol}</strong></td>
-          <td class="td-${t.side}">${t.side.toUpperCase()}</td>
-          <td>${t.qty}</td><td>$${t.price}</td><td>$${t.value}</td>
-          <td class="td-${t.mode}">${t.mode}</td>
-          <td class="td-${t.status}">${t.status}</td>
-        </tr>`).join('');
-    } else {
-      tbody.innerHTML = '<tr><td colspan="8" class="no-data">No trades yet.</td></tr>';
-    }
+    _lastTrades = Array.isArray(trades) ? trades : [];
+    renderTrades(_lastTrades);
   } catch(e) { console.warn('Trades error', e); }
 }
 
@@ -1477,17 +1528,8 @@ async function refreshData() {
       document.getElementById('badge-ingest').textContent  = on?'Ingest ▶':'Ingest ■';
     }
 
-    const tbody = document.getElementById('trades-body-inner');
-    if (trades.length) {
-      tbody.innerHTML = trades.map(t => `
-        <tr>
-          <td>${t.ts}</td><td><strong>${t.symbol}</strong></td>
-          <td class="td-${t.side}">${t.side.toUpperCase()}</td>
-          <td>${t.qty}</td><td>$${t.price}</td><td>$${t.value}</td>
-          <td class="td-${t.mode}">${t.mode}</td>
-          <td class="td-${t.status}">${t.status}</td>
-        </tr>`).join('');
-    }
+    _lastTrades = Array.isArray(trades) ? trades : [];
+    renderTrades(_lastTrades);
     document.getElementById('footer-ts').textContent = 'Last updated: ' + new Date().toLocaleTimeString() + ' · Auto-refresh every 30s';
   } catch(e) { console.warn('Refresh error', e); }
   loadHoldings();
