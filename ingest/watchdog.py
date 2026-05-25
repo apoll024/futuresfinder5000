@@ -2,8 +2,8 @@
 Resource watchdog — polls every 5 minutes and writes metrics to health_metrics table.
 
 Monitors:
-  - CPU and RAM per container (docker stats)
-  - Disk usage on /var/lib/docker (Postgres data + Ollama models)
+  - CPU and RAM per container (docker SDK via /var/run/docker.sock)
+  - Disk usage on /var/lib/docker (Postgres data)
   - Container liveness (auto-restarts stopped containers)
 
 Alert thresholds: warn >= 80%, critical >= 92%
@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import docker as docker_sdk
+
 from db.models import init_db, Session, HealthMetric, Bar, Signal, write_inbox
 
 POLL_INTERVAL      = 300
@@ -21,21 +23,43 @@ WARN_PCT           = 80.0
 CRITICAL_PCT       = 92.0
 WATCHED_CONTAINERS = ["ff_db", "ff_api", "ff_settler", "ff_crypto", "ff_digest", "ff_watchdog"]
 
+# Docker SDK client — connects via /var/run/docker.sock (mounted in compose)
+_docker_client = None
 
-def docker_stats():
+def _get_docker():
+    global _docker_client
+    if _docker_client is None:
+        _docker_client = docker_sdk.from_env()
+    return _docker_client
+
+
+def docker_stats() -> list:
+    """Return CPU/mem stats for all running containers via Docker SDK."""
     try:
-        r = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format",
-             '{"name":"{{.Name}}","cpu":"{{.CPUPerc}}","mem":"{{.MemPerc}}","mem_usage":"{{.MemUsage}}"}'],
-            capture_output=True, text=True, timeout=30
-        )
+        client = _get_docker()
         out = []
-        for line in r.stdout.strip().splitlines():
+        for container in client.containers.list():
             try:
-                d = json.loads(line)
-                d["cpu_pct"] = float(d["cpu"].replace("%", ""))
-                d["mem_pct"] = float(d["mem"].replace("%", ""))
-                out.append(d)
+                s = container.stats(stream=False)
+                # CPU %
+                cpu_delta = (s["cpu_stats"]["cpu_usage"]["total_usage"]
+                             - s["precpu_stats"]["cpu_usage"]["total_usage"])
+                sys_delta  = (s["cpu_stats"].get("system_cpu_usage", 0)
+                              - s["precpu_stats"].get("system_cpu_usage", 0))
+                n_cpu      = s["cpu_stats"].get("online_cpus") or len(
+                             s["cpu_stats"]["cpu_usage"].get("percpu_usage", [0]))
+                cpu_pct    = (cpu_delta / sys_delta * n_cpu * 100.0) if sys_delta > 0 else 0.0
+                # Mem %
+                mem_use    = s["memory_stats"].get("usage", 0)
+                mem_limit  = s["memory_stats"].get("limit", 1)
+                mem_pct    = (mem_use / mem_limit * 100.0) if mem_limit > 0 else 0.0
+                mem_label  = f"{mem_use/1024**2:.1f}MiB / {mem_limit/1024**2:.0f}MiB"
+                out.append({
+                    "name":      container.name,
+                    "cpu_pct":   round(cpu_pct, 2),
+                    "mem_pct":   round(mem_pct, 2),
+                    "mem_usage": mem_label,
+                })
             except Exception:
                 pass
         return out
@@ -56,19 +80,19 @@ def disk_pct(path="/var/lib/docker"):
     return 0.0
 
 
-def running_containers():
+def running_containers() -> set:
+    """Return names of all running containers via Docker SDK."""
     try:
-        r = subprocess.run(["docker", "ps", "--format", "{{.Names}}"],
-                           capture_output=True, text=True, timeout=10)
-        return set(r.stdout.strip().splitlines())
+        return {c.name for c in _get_docker().containers.list()}
     except Exception:
         return set()
 
 
-def restart_container(name):
+def restart_container(name: str):
     print(f"[watchdog] Restarting {name}...")
     try:
-        subprocess.run(["docker", "restart", name], timeout=60, check=True)
+        container = _get_docker().containers.get(name)
+        container.restart()
         print(f"[watchdog] {name} restarted OK")
     except Exception as e:
         print(f"[watchdog] Failed to restart {name}: {e}")
