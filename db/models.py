@@ -1,6 +1,7 @@
 """
 Database schema and helpers.
-Tables: bars (OHLCV), signals (LLM analysis + outcomes), trades, settings, health_metrics
+Tables: bars (OHLCV), signals (LLM analysis + outcomes), trades, settings, health_metrics,
+        llm_sessions (full AI call log), chat_messages (advisor conversation history)
 """
 import os
 from datetime import datetime
@@ -105,6 +106,49 @@ class KnowledgeItem(Base):
     ts         = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class LLMSession(Base):
+    """Full audit log of every AI call — prompt, raw response, latency, outcome."""
+    __tablename__ = "llm_sessions"
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    ts           = Column(DateTime, default=datetime.utcnow, index=True)
+    service      = Column(String(20))   # analyze | crypto | advisor | review | chat
+    model        = Column(String(60))
+    symbol       = Column(String(15))   # nullable — not set for chat calls
+    prompt       = Column(Text)
+    response     = Column(Text)
+    action       = Column(String(10))   # buy | sell | hold | None
+    confidence   = Column(Float)
+    latency_ms   = Column(Integer)
+
+
+class ChatMessage(Base):
+    """Persistent advisor / chat conversation history."""
+    __tablename__ = "chat_messages"
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    ts           = Column(DateTime, default=datetime.utcnow, index=True)
+    session_key  = Column(String(80), index=True)   # username or browser session id
+    service      = Column(String(20))               # advisor | review | chat
+    role         = Column(String(10))               # user | assistant | system
+    content      = Column(Text)
+
+
+def log_llm_session(service: str, model: str, prompt: str, response: str,
+                    symbol: str = None, action: str = None,
+                    confidence: float = None, latency_ms: int = None):
+    """Fire-and-forget: write one LLM call record. Silently ignores errors."""
+    try:
+        session = Session()
+        session.add(LLMSession(
+            service=service, model=model, symbol=symbol,
+            prompt=prompt, response=response,
+            action=action, confidence=confidence, latency_ms=latency_ms,
+        ))
+        session.commit()
+        session.close()
+    except Exception:
+        pass
+
+
 def get_setting(key: str, default: str = "") -> str:
     session = Session()
     row = session.query(Setting).filter(Setting.key == key).first()
@@ -134,6 +178,10 @@ def init_db():
         ("signals", "option_expiry",   "VARCHAR(12)"),
         ("trades",  "option_contract", "VARCHAR(30)"),
         ("trades",  "option_expiry",   "VARCHAR(12)"),
+        ("llm_sessions", "symbol",     "VARCHAR(15)"),
+        ("llm_sessions", "action",     "VARCHAR(10)"),
+        ("llm_sessions", "confidence", "FLOAT"),
+        ("llm_sessions", "latency_ms", "INTEGER"),
     ]
     try:
         with engine.begin() as conn:

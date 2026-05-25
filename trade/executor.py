@@ -294,9 +294,11 @@ def execute_signal(signal_id: int):
     if mode == "suggest":
         session.add(trade)
         sig.acted_on = True
+        action_str = sig.action.upper()
+        sym_str    = sig.symbol
         session.commit()
         session.close()
-        print(f"  [executor] Suggestion: {sig.action.upper()} {qty}x {sig.symbol} @ ~${price:.2f}")
+        print(f"  [executor] Suggestion: {action_str} {qty}x {sym_str} @ ~${price:.2f}")
         return
 
     # Safety guards for paper/live
@@ -372,9 +374,11 @@ def execute_crypto_signal(signal_id: int):
     if mode == "suggest":
         session.add(trade)
         sig.acted_on = True
+        action_str = sig.action.upper()
+        sym_str    = sig.symbol
         session.commit()
         session.close()
-        print(f"  [executor] Crypto suggestion: {sig.action.upper()} {sig.symbol} @ ~${price:.2f}")
+        print(f"  [executor] Crypto suggestion: {action_str} {sym_str} @ ~${price:.2f}")
         return
 
     # Safety: daily loss halt

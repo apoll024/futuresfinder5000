@@ -14,7 +14,8 @@ import pandas as pd
 import ta.trend as ta_trend
 import ta.momentum as ta_momentum
 import ta.volatility as ta_vol
-from db.models import Session, Bar, Signal, get_setting
+from db.models import Session, Bar, Signal, get_setting, log_llm_session
+from analyze.ai_context import SYSTEM_INSTRUCTIONS, build_db_context
 
 LLM_API_URL    = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
 LLM_MODEL      = os.getenv("LLM_MODEL",   "llama3.2:3b")
@@ -286,7 +287,9 @@ def call_llm(symbol: str, ind: dict, news: list,
 
     trending_block = (", ".join(trending[:8]) if trending else "none")
 
-    prompt = f"""You are a cryptocurrency trading signal engine for {symbol}.
+    prompt = f"""{SYSTEM_INSTRUCTIONS}
+{build_db_context(symbol, service="crypto")}
+You are a cryptocurrency trading signal engine for {symbol}.
 
 Current indicators:
   Close:     ${ind.get('close')}
@@ -326,7 +329,11 @@ Respond ONLY with valid JSON, no markdown:
         content = r.json()["choices"][0]["message"]["content"].strip()
         start = content.find("{")
         end   = content.rfind("}") + 1
-        return json.loads(content[start:end])
+        result = json.loads(content[start:end])
+        log_llm_session(service="crypto", model=LLM_MODEL, symbol=symbol,
+                        prompt=prompt, response=content,
+                        action=result.get("action"), confidence=result.get("confidence"))
+        return result
     except Exception as e:
         print(f"  [crypto] LLM error for {symbol}: {e}")
         return {

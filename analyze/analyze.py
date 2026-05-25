@@ -27,7 +27,8 @@ import ta.momentum as ta_momentum
 import ta.volatility as ta_vol
 import requests
 from zoneinfo import ZoneInfo
-from db.models import Session, Bar, Signal, Trade, init_db, get_setting, set_setting
+from db.models import Session, Bar, Signal, Trade, init_db, get_setting, set_setting, log_llm_session
+from analyze.ai_context import SYSTEM_INSTRUCTIONS, build_db_context
 
 LLM_API_URL   = os.getenv("LLM_API_URL", "http://ollama:11434/v1/chat/completions")
 MODEL         = os.getenv("LLM_MODEL", "llama3.2:3b")
@@ -236,7 +237,9 @@ If NOT recommending options, set option_rec to null.
         options_section    = ""
         option_rec_schema  = '  "option_rec": null\n'
 
-    prompt = f"""You are FuturesFinder5000, an autonomous day-trading agent. Your sole mission is to grow the capital allocated to you through disciplined, rules-based leveraged ETF trading.
+    prompt = f"""{SYSTEM_INSTRUCTIONS}
+{build_db_context(symbol, service="analyze")}
+You are FuturesFinder5000, an autonomous day-trading agent. Your sole mission is to grow the capital allocated to you through disciplined, rules-based leveraged ETF trading.
 
 IDENTITY & PURPOSE:
 - You manage real money. Every buy/sell signal you issue gets executed. Act accordingly.
@@ -299,7 +302,11 @@ add_symbol: set to a ticker string ONLY if you identify a high-conviction opport
     content = r.json()["choices"][0]["message"]["content"].strip()
     start = content.find("{")
     end   = content.rfind("}") + 1
-    return json.loads(content[start:end])
+    result = json.loads(content[start:end])
+    log_llm_session(service="analyze", model=MODEL, symbol=symbol,
+                    prompt=prompt, response=content,
+                    action=result.get("action"), confidence=result.get("confidence"))
+    return result
 
 
 def run_analysis(symbol: str):
