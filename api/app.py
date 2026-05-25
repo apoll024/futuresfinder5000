@@ -934,6 +934,7 @@ def api_signals_history():
     return jsonify(result)
 
 
+@app.route("/api/trades")
 @login_required
 def api_trades():
     return jsonify(recent_trades())
