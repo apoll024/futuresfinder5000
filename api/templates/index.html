@@ -886,8 +886,9 @@
       <div style="margin-top:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <div style="font-size:10px;font-weight:800;color:var(--purple2);letter-spacing:.5px;">CURRENT COINBASE HOLDINGS</div>
-          <button class="btn btn-ghost" onclick="loadCoinbaseData(true)">Refresh</button>
+          <button class="btn btn-ghost cb-refresh-btn" type="button" onclick="refreshCoinbaseData(this)">Refresh</button>
         </div>
+        <div id="cb-refresh-status" style="font-size:9px;color:var(--muted);margin:-2px 0 6px;text-align:right;"></div>
         <table>
           <thead>
             <tr><th>Asset</th><th>Balance</th><th>USD Value</th><th>Status</th></tr>
@@ -1075,7 +1076,7 @@
       <div id="cb-sidebar-content">
         <div style="color:var(--muted);font-size:10px;text-align:center;padding:8px;">Loading…</div>
       </div>
-      <button class="btn-wallet-refresh" onclick="loadCoinbaseData(true)">↻ Refresh Balances</button>
+      <button class="btn-wallet-refresh cb-refresh-btn" type="button" onclick="refreshCoinbaseData(this)">↻ Refresh Balances</button>
     </div>
 
     <!-- ── Knowledge Base (collapsible) ── -->
@@ -1606,6 +1607,33 @@ let _cbHoldings  = [];
 let _cbLimits    = {};
 let _cbReadiness = {};
 
+function setCbRefreshUi(loading, message='', ok=true) {
+  document.querySelectorAll('.cb-refresh-btn').forEach(btn => {
+    btn.disabled = loading;
+    btn.style.opacity = loading ? '.55' : '';
+    btn.style.cursor = loading ? 'wait' : '';
+  });
+  const status = document.getElementById('cb-refresh-status');
+  if (status && message) {
+    status.textContent = message;
+    status.style.color = ok ? 'var(--muted)' : 'var(--red2)';
+  }
+}
+
+async function refreshCoinbaseData(btn) {
+  setCbRefreshUi(true, 'Refreshing Coinbase balances…');
+  const originalText = btn ? btn.textContent : '';
+  if (btn) btn.textContent = 'Refreshing…';
+  try {
+    await loadCoinbaseData(true);
+    setCbRefreshUi(false, 'Last refreshed: ' + new Date().toLocaleTimeString(), true);
+  } catch(e) {
+    setCbRefreshUi(false, 'Refresh failed: ' + (e.message || e), false);
+  } finally {
+    if (btn) btn.textContent = originalText;
+  }
+}
+
 async function loadCoinbaseData(force=false) {
   await Promise.all([
     loadCbHoldings(force),
@@ -1617,8 +1645,10 @@ async function loadCoinbaseData(force=false) {
 
 async function loadCbHoldings(force=false) {
   try {
-    const url = force ? '/api/coinbase/holdings?refresh=1' : '/api/coinbase/holdings';
-    const data = await fetch(url).then(r=>r.json());
+    const url = force ? '/api/coinbase/holdings?refresh=1&_=' + Date.now() : '/api/coinbase/holdings';
+    const res = await fetch(url, {cache: force ? 'no-store' : 'default'});
+    if (!res.ok) throw new Error('Coinbase holdings HTTP ' + res.status);
+    const data = await res.json();
     const badge = document.getElementById('cb-status-badge');
     const tbody = document.getElementById('cb-holdings-body');
 
@@ -1673,7 +1703,7 @@ async function loadCbHoldings(force=false) {
 
 async function loadCbLimits() {
   try {
-    const data = await fetch('/api/crypto/coin-limits').then(r=>r.json());
+    const data = await fetch('/api/crypto/coin-limits', {cache:'no-store'}).then(r=>r.json());
     _cbLimits = data.limits || {};
     const grid = document.getElementById('coin-limits-grid');
     if (!grid) return;
@@ -1710,7 +1740,7 @@ async function saveCoinLimits() {
 
 async function loadCbReadiness() {
   try {
-    const data = await fetch('/api/coinbase/readiness').then(r=>r.json());
+    const data = await fetch('/api/coinbase/readiness?_=' + Date.now(), {cache:'no-store'}).then(r=>r.json());
     _cbReadiness = data.symbols || {};
     const grid = document.getElementById('readiness-grid');
     if (!grid) return;
