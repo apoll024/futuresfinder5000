@@ -33,6 +33,12 @@ MIN_ANALYSIS_GAP   = 55     # seconds between analyses per symbol
 _shutdown    = False
 _stream_ref  = None
 _known_syms: set = set()
+ALPACA_STREAM_SYMBOLS = {
+    s.strip().upper() for s in os.getenv(
+        "ALPACA_CRYPTO_STREAM_SYMBOLS",
+        "BTC/USD,ETH/USD,SOL/USD,XRP/USD,DOGE/USD,LTC/USD,BCH/USD,LINK/USD",
+    ).split(",") if s.strip()
+}
 
 
 def _handle_exit(signum, frame):
@@ -104,6 +110,13 @@ def _get_active_symbols() -> list:
         return [_normalize_crypto_sym(s) for s in raw.split(",") if s.strip()]
     except Exception:
         return ["BTC/USD", "ETH/USD", "SOL/USD"]
+
+
+def _streamable_symbols(symbols: list) -> list:
+    skipped = [s for s in symbols if s not in ALPACA_STREAM_SYMBOLS]
+    if skipped:
+        print(f"[crypto] Alpaca stream skipping unsupported symbols: {skipped}")
+    return [s for s in symbols if s in ALPACA_STREAM_SYMBOLS]
 
 
 def backfill_bars(symbols: list, min_hours: int = 30):
@@ -190,7 +203,7 @@ def backfill_bars(symbols: list, min_hours: int = 30):
 def run_stream():
     global _stream_ref, _known_syms
 
-    active = _get_active_symbols()
+    active = _streamable_symbols(_get_active_symbols())
     _known_syms = set(active)
     stream = CryptoDataStream(API_KEY, SECRET_KEY)
     _stream_ref = stream
@@ -211,7 +224,7 @@ def _symbol_watcher():
         if _stream_ref is None:
             continue
         try:
-            db_syms = set(_get_active_symbols())
+            db_syms = set(_streamable_symbols(_get_active_symbols()))
             new = db_syms - _known_syms
             if new:
                 print(f"[crypto] New symbols detected: {new} — subscribing")

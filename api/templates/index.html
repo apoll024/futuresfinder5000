@@ -313,6 +313,13 @@
     .sig-card.none { box-shadow: inset 3px 0 0 var(--border2); }
     .sig-card.crypto-card { background: linear-gradient(148deg, var(--surface), var(--surface3)); }
     .sig-card:hover { border-color: var(--border2); }
+    .sig-remove {
+      position: absolute; top: 7px; right: 7px; width: 20px; height: 20px;
+      border-radius: 50%; border: 1px solid rgba(239,68,68,.25);
+      background: rgba(239,68,68,.08); color: var(--muted);
+      cursor: pointer; font-size: 11px; line-height: 18px; text-align: center;
+    }
+    .sig-remove:hover { color: var(--red2); border-color: rgba(239,68,68,.55); }
 
     .sig-hdr { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 7px; }
     .sig-sym-block { display: flex; flex-direction: column; gap: 2px; }
@@ -696,6 +703,7 @@
             <input type="text" id="crypto-sym-input" placeholder="BTC/USD" maxlength="10"
                    onkeydown="if(event.key==='Enter') addCryptoSymbol()">
             <button class="btn btn-add" onclick="addCryptoSymbol()">+ Add</button>
+            <button class="btn btn-save" onclick="addTop20CryptoSymbols()">Top 20</button>
           </div>
           <div class="chips" id="crypto-sym-chips">
             {% for s in crypto_symbols %}
@@ -811,6 +819,7 @@
       {% for s in signals if '/' in s.symbol %}
       {% set act = s.action if s.action != '—' else 'none' %}
       <div class="sig-card crypto-card {{ act }}" id="sigcard-{{ s.symbol|replace('/', '_') }}">
+        <button class="sig-remove" title="Remove signal tile" onclick="removeCryptoSymbol('{{ s.symbol }}')">×</button>
         <div class="sig-hdr">
           <div class="sig-sym-block">
             <div class="sig-sym-row">
@@ -1226,19 +1235,33 @@ async function toggleIngest() {
 // ════════════════════════════════════════════════════════════════════════════
 async function addCryptoSymbol() {
   const inp = document.getElementById('crypto-sym-input');
-  const sym = inp.value.trim().toUpperCase();
+  let sym = inp.value.trim().toUpperCase().replace('-', '/');
+  if (sym && !sym.includes('/')) sym = sym + '/USD';
   if (!sym) return;
   const data = await fetch('/api/crypto/symbols/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})}).then(r=>r.json());
   if (data.error) { toast(data.error, false); return; }
   inp.value = '';
   rebuildCryptoChips(data.crypto_symbols);
   toast(sym + ' added to crypto watchlist');
+  refreshSignalCards();
+  loadCoinbaseData();
 }
 
 async function removeCryptoSymbol(sym) {
   const data = await fetch('/api/crypto/symbols/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})}).then(r=>r.json());
   rebuildCryptoChips(data.crypto_symbols);
   toast(sym + ' removed');
+  refreshSignalCards();
+  loadCoinbaseData();
+}
+
+async function addTop20CryptoSymbols() {
+  const data = await fetch('/api/crypto/symbols/top20',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(r=>r.json());
+  if (data.error) { toast(data.error, false); return; }
+  rebuildCryptoChips(data.crypto_symbols || []);
+  toast('Top market-cap crypto signal tiles added');
+  refreshSignalCards();
+  loadCoinbaseData();
 }
 
 function rebuildCryptoChips(symbols) {
@@ -1976,6 +1999,7 @@ async function refreshSignalCards() {
       const ind = s.indicators || {};
       const conf = s.confidence || 0;
       return `<div class="sig-card crypto-card ${act}">
+        <button class="sig-remove" title="Remove signal tile" onclick="removeCryptoSymbol('${escHtml(s.symbol)}')">×</button>
         <div class="sig-hdr">
           <div class="sig-sym-block">
             <div class="sig-sym-row">

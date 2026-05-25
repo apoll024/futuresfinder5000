@@ -180,7 +180,55 @@ def get_watchlist_only() -> bool:
 
 def get_crypto_symbols() -> list[str]:
     raw = get_setting("crypto_symbols", "BTC/USD,ETH/USD,SOL/USD")
-    return [s.strip().upper() for s in raw.split(",") if s.strip()]
+    result = []
+    for s in raw.split(","):
+        sym = normalize_crypto_symbol(s)
+        if sym and sym not in result:
+            result.append(sym)
+    return result
+
+
+def normalize_crypto_symbol(symbol: str) -> str:
+    sym = (symbol or "").strip().upper().replace("-", "/")
+    if not sym:
+        return ""
+    if "/" not in sym:
+        sym = f"{sym}/USD"
+    base, quote = (p.strip() for p in sym.split("/", 1))
+    if not base:
+        return ""
+    return f"{base}/{quote or 'USD'}"
+
+
+def fetch_top_crypto_symbols(limit: int = 20) -> list[str]:
+    stable = {"USDT", "USDC", "DAI", "FDUSD", "USDE", "USDS", "BUSD", "TUSD", "USDP", "PYUSD"}
+    fallback = [
+        "BTC/USD", "ETH/USD", "XRP/USD", "BNB/USD", "SOL/USD",
+        "DOGE/USD", "TRX/USD", "ADA/USD", "HYPE/USD", "LINK/USD",
+        "AVAX/USD", "XLM/USD", "SUI/USD", "BCH/USD", "LTC/USD",
+        "HBAR/USD", "TON/USD", "SHIB/USD", "DOT/USD", "UNI/USD",
+    ]
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            params={"vs_currency": "usd", "order": "market_cap_desc", "per_page": 40, "page": 1},
+            timeout=12,
+        )
+        r.raise_for_status()
+        symbols = []
+        for coin in r.json():
+            base = str(coin.get("symbol", "")).upper()
+            if not base or base in stable:
+                continue
+            sym = f"{base}/USD"
+            if sym not in symbols:
+                symbols.append(sym)
+            if len(symbols) >= limit:
+                break
+        return symbols or fallback[:limit]
+    except Exception as e:
+        print(f"[crypto] top market-cap fetch failed: {e}")
+        return fallback[:limit]
 
 
 def get_all_positions()-> list[dict]:
@@ -544,7 +592,7 @@ def toggle_crypto():
 @app.route("/api/crypto/symbols/add", methods=["POST"])
 @login_required
 def add_crypto_symbol():
-    sym = (request.json or {}).get("symbol", "").strip().upper()
+    sym = normalize_crypto_symbol((request.json or {}).get("symbol", ""))
     if not sym:
         return jsonify({"error": "No symbol provided"}), 400
     syms = get_crypto_symbols()
@@ -557,10 +605,22 @@ def add_crypto_symbol():
 @app.route("/api/crypto/symbols/remove", methods=["POST"])
 @login_required
 def remove_crypto_symbol():
-    sym  = (request.json or {}).get("symbol", "").strip().upper()
+    sym  = normalize_crypto_symbol((request.json or {}).get("symbol", ""))
     syms = [s for s in get_crypto_symbols() if s != sym]
     set_setting("crypto_symbols", ",".join(syms))
     return jsonify({"crypto_symbols": syms})
+
+
+@app.route("/api/crypto/symbols/top20", methods=["POST"])
+@login_required
+def add_top_crypto_symbols():
+    top = fetch_top_crypto_symbols(20)
+    syms = get_crypto_symbols()
+    for sym in top:
+        if sym not in syms:
+            syms.append(sym)
+    set_setting("crypto_symbols", ",".join(syms))
+    return jsonify({"crypto_symbols": syms, "added": top})
 
 
 # ── Crypto market data (fear-greed, top coins, trending) ────────────────────
