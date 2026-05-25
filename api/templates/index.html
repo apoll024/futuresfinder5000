@@ -1653,6 +1653,13 @@ function updateCbSidebar() {
 
 
 
+const _chatHistory = [];
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 80) + 'px';
+}
+
 function chatKeydown(e) { if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }
 
 function appendMsg(role, text, streaming=false) {
