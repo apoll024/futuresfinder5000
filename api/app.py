@@ -1932,7 +1932,8 @@ def api_chat():
                 LLM_API_URL,
                 headers=_llm_headers(),
                 json={"model": LLM_MODEL, "messages": messages,
-                      "stream": True, "temperature": 0.25, "max_tokens": 1024},
+                      "stream": True, "temperature": 0.25,
+                      "max_tokens": int(os.getenv("CHAT_MAX_TOKENS", "3072"))},
                 stream=True, timeout=(15, 300),
             )
             r.raise_for_status()

@@ -1769,6 +1769,30 @@ function scrollChatToBottom() {
   requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
 }
 
+async function readSseEvents(res, onEvent) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const {done, value} = await reader.read();
+    buffer += done ? decoder.decode() : decoder.decode(value, {stream: true});
+    if (done && buffer) buffer += '\n';
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6);
+      if (data.trim() === '[DONE]') return;
+      try {
+        const keepGoing = onEvent(JSON.parse(data));
+        if (keepGoing === false) return;
+      } catch(e) {}
+    }
+    if (done) break;
+  }
+}
+
 function autoResize(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 80) + 'px';
@@ -1811,25 +1835,13 @@ async function sendChat() {
       span.parentElement.className = 'msg assistant';
       return;
     }
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
     span.parentElement.className = 'msg assistant';
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      for (const line of decoder.decode(value).split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const d = line.slice(6);
-        if (d === '[DONE]') break;
-        try {
-          const obj = JSON.parse(d);
-          if (obj.error)   fullText += '\n⚠ ' + obj.error;
-          if (obj.content) fullText += obj.content;
-          span.textContent = fullText;
-          scrollChatToBottom();
-        } catch(e) {}
-      }
-    }
+    await readSseEvents(res, obj => {
+      if (obj.error)   fullText += '\n⚠ ' + obj.error;
+      if (obj.content) fullText += obj.content;
+      span.textContent = fullText;
+      scrollChatToBottom();
+    });
   } catch(e) { span.textContent = '⚠ ' + e.message; }
   if (fullText) _chatHistory.push({role:'assistant', content:fullText});
   btn.disabled = false;

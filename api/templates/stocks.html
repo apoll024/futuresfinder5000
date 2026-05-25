@@ -1304,15 +1304,21 @@ function appendMsg(role, text, streaming=false) {
 async function streamChat(res, onChunk) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
+  let buffer = '';
   while (true) {
     const {done, value} = await reader.read();
-    if (done) break;
-    for (const line of decoder.decode(value).split('\n')) {
+    buffer += done ? decoder.decode() : decoder.decode(value, {stream: true});
+    if (done && buffer) buffer += '\n';
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
       if (!line.startsWith('data: ')) continue;
       const d = line.slice(6);
-      if (d === '[DONE]') return;
+      if (d.trim() === '[DONE]') return;
       try { onChunk(JSON.parse(d)); } catch(e) {}
     }
+    if (done) break;
   }
 }
 
@@ -1334,25 +1340,13 @@ async function sendChat() {
       span.parentElement.className = 'msg assistant';
       return;
     }
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
     span.parentElement.className = 'msg assistant';
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      for (const line of decoder.decode(value).split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        const d = line.slice(6);
-        if (d === '[DONE]') break;
-        try {
-          const obj = JSON.parse(d);
-          if (obj.error)   fullText += '\n⚠ ' + obj.error;
-          if (obj.content) fullText += obj.content;
-          span.textContent = fullText;
-          scrollChatToBottom();
-        } catch(e) {}
-      }
-    }
+    await streamChat(res, obj => {
+      if (obj.error)   fullText += '\n⚠ ' + obj.error;
+      if (obj.content) fullText += obj.content;
+      span.textContent = fullText;
+      scrollChatToBottom();
+    });
   } catch(e) { span.textContent = '⚠ ' + e.message; }
   if (fullText) _chatHistory.push({role:'assistant', content:fullText});
   btn.disabled = false;
