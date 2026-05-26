@@ -25,9 +25,10 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
-      - LLM_MODEL=${LLM_MODEL:-gemini-3.5-flash}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LLM_API_URL=${LLM_API_URL:-https://models.inference.ai.azure.com/chat/completions}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
     mem_limit: 768m
     depends_on:
@@ -85,9 +86,10 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
-      - LLM_MODEL=${LLM_MODEL:-gemini-3.5-flash}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LLM_API_URL=${LLM_API_URL:-https://models.inference.ai.azure.com/chat/completions}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - TRADE_MODE=${TRADE_MODE:-suggest}
       - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
       - MAX_POSITION_USD=${MAX_POSITION_USD:-500}
@@ -120,9 +122,10 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
-      - LLM_MODEL=${LLM_MODEL:-gemini-3.5-flash}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LLM_API_URL=${LLM_API_URL:-https://models.inference.ai.azure.com/chat/completions}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - CRYPTO_SYMBOLS=${CRYPTO_SYMBOLS:-BTC/USD,ETH/USD,SOL/USD}
       - COINGECKO_API_KEY=${COINGECKO_API_KEY:-}
       - WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY:-}
@@ -144,9 +147,10 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
-      - LLM_MODEL=${LLM_MODEL:-gemini-3.5-flash}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LLM_API_URL=${LLM_API_URL:-https://models.inference.ai.azure.com/chat/completions}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - CRYPTO_SYMBOLS=${CRYPTO_SYMBOLS:-BTC/USD,ETH/USD,SOL/USD}
       - REDUNDANT_FEED_POLL_SECONDS=${REDUNDANT_FEED_POLL_SECONDS:-60}
       - REDUNDANT_FEED_ANALYZE=${REDUNDANT_FEED_ANALYZE:-true}

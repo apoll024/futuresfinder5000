@@ -27,15 +27,17 @@ from ingest.crypto_derivatives import fetch_and_store, latest_for_symbols
 app           = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "ff5k-change-me-in-prod-32bytes!!")
 ET            = ZoneInfo("America/New_York")
-LLM_API_URL   = os.getenv("LLM_API_URL",  "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
-LLM_MODEL     = os.getenv("LLM_MODEL",    "gemini-3.5-flash")
+LLM_API_URL   = os.getenv("LLM_API_URL",  "https://models.inference.ai.azure.com/chat/completions")
+LLM_MODEL     = os.getenv("LLM_MODEL",    "gpt-4o")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
 
 
 def _llm_headers() -> dict:
     h = {"Content-Type": "application/json"}
-    if GEMINI_API_KEY:
-        h["Authorization"] = f"Bearer {GEMINI_API_KEY}"
+    token = GITHUB_TOKEN or GEMINI_API_KEY
+    if token:
+        h["Authorization"] = f"Bearer {token}"
     return h
 
 # Auth credentials — stored as SHA-256 hashes; set via env or use defaults

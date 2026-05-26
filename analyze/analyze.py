@@ -30,15 +30,17 @@ from zoneinfo import ZoneInfo
 from db.models import Session, Bar, Signal, Trade, init_db, get_setting, set_setting, log_llm_session
 from analyze.ai_context import SYSTEM_INSTRUCTIONS, build_db_context
 
-LLM_API_URL    = os.getenv("LLM_API_URL", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
-MODEL          = os.getenv("LLM_MODEL", "gemini-3.5-flash")
+LLM_API_URL    = os.getenv("LLM_API_URL", "https://models.inference.ai.azure.com/chat/completions")
+MODEL          = os.getenv("LLM_MODEL", "gpt-4o")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
 
 
 def _llm_headers() -> dict:
     h = {"Content-Type": "application/json"}
-    if GEMINI_API_KEY:
-        h["Authorization"] = f"Bearer {GEMINI_API_KEY}"
+    token = GITHUB_TOKEN or GEMINI_API_KEY
+    if token:
+        h["Authorization"] = f"Bearer {token}"
     return h
 TRADE_MODE  = os.getenv("TRADE_MODE", "suggest")
 API_KEY     = os.getenv("ALPACA_API_KEY")
