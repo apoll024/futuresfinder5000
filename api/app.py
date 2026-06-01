@@ -22,20 +22,20 @@ from db.models import (
     LLMSession, ChatMessage, get_setting, set_setting, AIMessage, write_inbox,
     log_llm_session,
 )
+from db.llm_gateway import llm_is_available as gateway_llm_available
 from ingest.crypto_derivatives import fetch_and_store, latest_for_symbols
 
 app           = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET", "ff5k-change-me-in-prod-32bytes!!")
 ET            = ZoneInfo("America/New_York")
-LLM_API_URL   = os.getenv("LLM_API_URL",  "https://models.inference.ai.azure.com/chat/completions")
+LLM_API_URL   = os.getenv("LLM_API_URL",  "https://models.github.ai/inference/chat/completions")
 LLM_MODEL     = os.getenv("LLM_MODEL",    "gpt-4o")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
 
 
 def _llm_headers() -> dict:
     h = {"Content-Type": "application/json"}
-    token = GITHUB_TOKEN or GEMINI_API_KEY
+    token = GITHUB_TOKEN
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
@@ -87,8 +87,16 @@ def logout():
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+_llm_healthy_cache: dict = {"result": None, "ts": 0.0}
+_LLM_HEALTHY_TTL = 300  # 5 minutes between real health pings
+
 def llm_healthy() -> bool:
-    """Returns True if the LLM endpoint is reachable and accepting requests."""
+    """Returns True if the LLM endpoint is reachable. Result cached for 5 minutes."""
+    import time as _time
+    now = _time.time()
+    if (_llm_healthy_cache["result"] is not None
+            and (now - _llm_healthy_cache["ts"]) < _LLM_HEALTHY_TTL):
+        return _llm_healthy_cache["result"]
     try:
         r = requests.post(
             LLM_API_URL, headers=_llm_headers(),
@@ -96,9 +104,12 @@ def llm_healthy() -> bool:
                   "max_tokens": 1},
             timeout=8,
         )
-        return r.ok
+        result = r.ok and r.status_code != 429
     except Exception:
-        return False
+        result = False
+    _llm_healthy_cache["result"] = result
+    _llm_healthy_cache["ts"] = now
+    return result
 
 
 def get_docker_client():
@@ -1743,6 +1754,24 @@ def api_health_latest():
     return jsonify(resource_stats())
 
 
+@app.route("/api/llm/status")
+@login_required
+def api_llm_status():
+    return jsonify({
+        "ok": gateway_llm_available(),
+        "provider": "github-models",
+        "model": LLM_MODEL,
+        "daily_call_cap": int(os.getenv("LLM_DAILY_CALL_CAP", "750")),
+        "daily_critical_cap": int(os.getenv("LLM_DAILY_CRITICAL_CAP", "500")),
+        "calls_used": int(get_setting("llm_calls_used", "0") or 0),
+        "critical_calls_used": int(get_setting("llm_critical_calls_used", "0") or 0),
+        "budget_day": get_setting("llm_budget_day", ""),
+        "risk_review_enabled": os.getenv("LLM_RISK_REVIEW_ENABLED", "true").lower() == "true",
+        "symbol_cooldown_seconds": int(os.getenv("LLM_SYMBOL_COOLDOWN_SECONDS", "180")),
+        "cache_ttl_seconds": int(os.getenv("LLM_CACHE_TTL_SECONDS", "300")),
+    })
+
+
 def build_chat_context() -> str:
     """Snapshot of current market state injected into every LLM chat turn."""
     stock_symbols = get_symbols()
@@ -1821,7 +1850,7 @@ def build_chat_context() -> str:
         f"Crypto: {'ENABLED' if get_crypto_enabled() else 'DISABLED'}\n"
         f"News digest last run: {get_setting('news_digest_last_run', 'Never')}\n"
         f"Ingest: {'running' if ingest_st.get('running') else 'stopped'} | "
-        f"LLM (Gemini): {'ok' if llm_healthy() else 'OFFLINE'}\n"
+        f"LLM (GPT-4o): {'ok' if llm_healthy() else 'OFFLINE'}\n"
         f"Today — P&L: ${stats['pnl']} | "
         f"Trades: {stats['trades_today']} (B={stats['buys']} S={stats['sells']}) | "
         f"Signals: {stats['signals_today']}\n"

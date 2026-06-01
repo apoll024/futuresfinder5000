@@ -24,13 +24,14 @@ import pandas as pd
 import ta.trend as ta_trend
 import ta.momentum as ta_momentum
 import ta.volatility as ta_vol
+from db.llm_guard import llm_is_available, invalidate_cache
+from db.llm_gateway import chat_completion, extract_json_object, risk_review_decision
 from db.models import Session, Bar, Signal, get_setting, log_llm_session
 from analyze.ai_context import SYSTEM_INSTRUCTIONS, build_db_context
 from ingest.crypto_derivatives import fetch_and_store, latest_derivatives
 
-LLM_API_URL    = os.getenv("LLM_API_URL", "https://models.inference.ai.azure.com/chat/completions")
+LLM_API_URL    = os.getenv("LLM_API_URL", "https://models.github.ai/inference/chat/completions")
 LLM_MODEL      = os.getenv("LLM_MODEL",   "gpt-4o")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
 
 # Optional CoinGecko Demo API key — raises rate limit from 30 to 500 req/min
@@ -59,7 +60,7 @@ _BINANCE_SYM = {
 
 def _llm_headers() -> dict:
     h = {"Content-Type": "application/json"}
-    token = GITHUB_TOKEN or GEMINI_API_KEY
+    token = GITHUB_TOKEN
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
@@ -567,7 +568,12 @@ RECENT NEWS ({symbol.split('/')[0]}):
 
 RULES:
   - Crypto trades 24/7. Use IOC time-in-force (DAY is NOT valid for crypto).
-  - Your goal is profit with caution. Decide buy/sell/hold from the complete context.
+  - Your goal is NET capital growth after fees. Decide buy/sell/hold from the complete context.
+  - FEES: Coinbase charges ~0.6% taker fee per trade side (~1.2% round trip minimum).
+    • BUY only when you expect a gain of at least 1.5% to clear fees and yield real profit.
+    • SELL for profit only when position gain covers both fee legs (net positive return).
+    • SELL to cut losses (stop-loss) is always valid — use high confidence (>= 0.80) for stop-loss sells.
+    • Avoid low-conviction round trips — each one that fails to clear 1.2% erodes capital.
   - Multi-timeframe indicators, funding, OI, news, macro context, and recent outcomes are evidence, not mandatory gates.
   - High funding can imply crowded risk; rising OI can imply trend strength. Weigh these rather than applying rigid rules.
   - Advisory technical bias: {suggested_action.upper()} — you may override it when the broader setup justifies it.
@@ -576,30 +582,50 @@ Respond ONLY with valid JSON, no markdown:
 {{"action":"buy"|"sell"|"hold","confidence":0.0-1.0,"reasoning":"<concise reason ≤150 chars>"}}"""
 
     try:
-        r = requests.post(LLM_API_URL, headers=_llm_headers(), json={
-            "model": LLM_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-        }, timeout=60)
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"].strip()
-        start   = content.find("{")
-        end     = content.rfind("}") + 1
-        result  = json.loads(content[start:end])
+        content, meta = chat_completion(
+            purpose="crypto:analyst",
+            symbol=symbol,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=220,
+            temperature=0.2,
+            timeout=60,
+            critical=True,
+        )
+        result = extract_json_object(content)
+        result = risk_review_decision(
+            service="crypto",
+            symbol=symbol,
+            decision=result,
+            context={
+                "suggested_action": suggested_action,
+                "fear_greed": fear_greed_val,
+                "funding": funding,
+                "open_interest": oi,
+                "indicators": {
+                    "close": ind.get("1m_close"),
+                    "rsi": ind.get("1m_rsi_14"),
+                    "above_vwap": ind.get("1m_above_vwap"),
+                    "volume_ratio": ind.get("1m_volume_ratio"),
+                    "trend_aligned": ind.get("1m_trend_aligned"),
+                    "atr": ind.get("atr_14"),
+                },
+            },
+        )
         log_llm_session(service="crypto", model=LLM_MODEL, symbol=symbol,
                         prompt=prompt, response=content,
-                        action=result.get("action"), confidence=result.get("confidence"))
+                        action=result.get("action"), confidence=result.get("confidence"),
+                        latency_ms=meta.get("latency_ms"))
         return result
     except Exception as e:
-        print(f"  [crypto] LLM error for {symbol}: {e}")
-        return {
-            "action":     suggested_action,
-            "confidence": 0.5,
-            "reasoning":  f"LLM unavailable — technical signal: {suggested_action}",
-        }
+        print(f"  [crypto] LLM error for {symbol}: {e} — skipping signal (no fallback trades)")
+        invalidate_cache()
+        return None
 
 
 def run_analysis(symbol: str):
+    if not llm_is_available():
+        print(f"  [{symbol}] SKIP crypto run_analysis — LLM unavailable")
+        return
     if get_setting("crypto_enabled", "true") != "true":
         return
 
@@ -658,6 +684,9 @@ def run_analysis(symbol: str):
         funding=funding,
         oi=oi,
     )
+    if result is None:
+        print(f"  [{symbol}] ABORT run_analysis — LLM call failed, no trade signal generated")
+        return
 
     action     = result.get("action", "hold")
     confidence = float(result.get("confidence", 0.5))

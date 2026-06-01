@@ -25,20 +25,20 @@ import pandas as pd
 import ta.trend as ta_trend
 import ta.momentum as ta_momentum
 import ta.volatility as ta_vol
-import requests
 from zoneinfo import ZoneInfo
 from db.models import Session, Bar, Signal, Trade, init_db, get_setting, set_setting, log_llm_session
 from analyze.ai_context import SYSTEM_INSTRUCTIONS, build_db_context
+from db.llm_guard import llm_is_available
+from db.llm_gateway import chat_completion, extract_json_object, risk_review_decision
 
-LLM_API_URL    = os.getenv("LLM_API_URL", "https://models.inference.ai.azure.com/chat/completions")
+LLM_API_URL    = os.getenv("LLM_API_URL", "https://models.github.ai/inference/chat/completions")
 MODEL          = os.getenv("LLM_MODEL", "gpt-4o")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
 
 
 def _llm_headers() -> dict:
     h = {"Content-Type": "application/json"}
-    token = GITHUB_TOKEN or GEMINI_API_KEY
+    token = GITHUB_TOKEN
     if token:
         h["Authorization"] = f"Bearer {token}"
     return h
@@ -261,7 +261,7 @@ TRADING DISCRETION:
 - Respect configured capital limits and daily loss protection.
 {options_section}{underlying_section}
 {symbol} technical indicators (1-min bars):
-{json.dumps(indicators, indent=2)}
+{json.dumps(indicators, separators=(",", ":"))}
 
 Recent 1-min closes (oldest → newest):
 {recent_closes}
@@ -275,24 +275,39 @@ Respond ONLY with valid JSON — no prose, no explanation outside the JSON:
 {option_rec_schema}}}
 add_symbol: set to a ticker string ONLY if you identify a high-conviction opportunity in a liquid US equity or leveraged ETF not currently tracked. Must be alphanumeric, ≤ 5 chars. Otherwise null."""
 
-    r = requests.post(LLM_API_URL,
-                      headers=_llm_headers(),
-                      json={"model": MODEL,
-                            "messages": [{"role": "user", "content": prompt}],
-                            "max_tokens": 450, "temperature": 0.1},
-                      timeout=120)
-    r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"].strip()
-    start = content.find("{")
-    end   = content.rfind("}") + 1
-    result = json.loads(content[start:end])
+    content, meta = chat_completion(
+        purpose="analyze:analyst",
+        symbol=symbol,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=320,
+        temperature=0.1,
+        timeout=90,
+        critical=True,
+    )
+    result = extract_json_object(content)
+    result = risk_review_decision(
+        service="analyze",
+        symbol=symbol,
+        decision=result,
+        context={
+            "minutes_left": minutes_left,
+            "leverage": leverage,
+            "position": position,
+            "indicators": indicators,
+            "underlying": underlying_indicators,
+        },
+    )
     log_llm_session(service="analyze", model=MODEL, symbol=symbol,
                     prompt=prompt, response=content,
-                    action=result.get("action"), confidence=result.get("confidence"))
+                    action=result.get("action"), confidence=result.get("confidence"),
+                    latency_ms=meta.get("latency_ms"))
     return result
 
 
 def run_analysis(symbol: str):
+    if not llm_is_available():
+        print(f"  [{symbol}] SKIP run_analysis — LLM unavailable")
+        return
     if get_setting("stocks_enabled", "true") != "true":
         return
     if not market_is_open(allow_entry=True):

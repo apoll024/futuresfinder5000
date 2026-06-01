@@ -5,7 +5,7 @@ Streams 1-minute bars for crypto pairs, writes to PostgreSQL, triggers LLM analy
 Resilience:
   - Exponential backoff reconnect on WebSocket disconnect (5s → 120s)
   - Per-symbol circuit breaker: backs off 15 min after 3 consecutive LLM failures
-  - Rate limit: one analysis per symbol per 55 seconds (debounce rapid bars)
+  - Rate limit: one analysis per symbol per configurable cooldown
   - Graceful shutdown on SIGTERM / SIGINT
   - Crypto is 24/7 — no market-hours gate applied
 """
@@ -29,7 +29,7 @@ _last_analyzed: dict = defaultdict(float)
 
 CIRCUIT_OPEN_AFTER = 3
 BACKOFF_SECONDS    = 900    # 15 min
-MIN_ANALYSIS_GAP   = 55     # seconds between analyses per symbol
+MIN_ANALYSIS_GAP   = int(os.getenv("CRYPTO_ANALYSIS_GAP_SECONDS", os.getenv("MIN_ANALYSIS_GAP_SECONDS", "180")))
 
 _shutdown    = False
 _stream_ref  = None

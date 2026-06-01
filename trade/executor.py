@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, ClosePositionRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
+from db.llm_guard import llm_is_available, invalidate_cache as _llm_invalidate
 from db.models import Session, Signal, Trade, Bar, get_setting
 
 TRADE_MODE       = os.getenv("TRADE_MODE", "suggest")
@@ -321,6 +322,15 @@ def execute_option_order(underlying: str, option_rec: dict,
 
 
 def execute_signal(signal_id: int):
+    # CRITICAL SAFETY CONTROL: block all trades if LLM is unavailable
+    if not llm_is_available():
+        from db.models import write_inbox
+        write_inbox("alert", "LLM Unavailable — Trade Blocked",
+                    "execute_signal called but LLM endpoint is unreachable. "
+                    "Trade execution is blocked until LLM is restored.",
+                    source="executor")
+        print(f"  [executor] ABORT execute_signal({signal_id}) — LLM unavailable")
+        return
     eod_check()
 
     session = Session()
@@ -407,6 +417,15 @@ def execute_crypto_signal(signal_id: int):
     Execute a crypto signal via Coinbase Advanced Trade (primary) or Alpaca (fallback).
     Buys use USD notional; sells use the full available base-currency balance.
     """
+    # CRITICAL SAFETY CONTROL: block all trades if LLM is unavailable
+    if not llm_is_available():
+        from db.models import write_inbox
+        write_inbox("alert", "LLM Unavailable — Crypto Trade Blocked",
+                    "execute_crypto_signal called but LLM endpoint is unreachable. "
+                    "Trade execution is blocked until LLM is restored.",
+                    source="executor")
+        print(f"  [executor] ABORT execute_crypto_signal({signal_id}) — LLM unavailable")
+        return
     session = Session()
     sig = session.query(Signal).filter(Signal.id == signal_id).first()
     if not sig or sig.action == "hold":
@@ -455,6 +474,43 @@ def execute_crypto_signal(signal_id: int):
         close_all_positions("LOSS-HALT")
         session.close()
         return
+
+    # ── Fee-aware profitability gate (live sell orders only) ──────────────────
+    # Coinbase charges ~0.6% taker fee per side (~1.2% round trip).
+    # Block a sell if net proceeds after fees would be less than the cost basis
+    # UNLESS confidence >= 0.80 (high-conviction stop-loss override).
+    COINBASE_FEE_RATE = 0.006
+    if sig.action == "sell":
+        recent_buy = (
+            session.query(Trade)
+            .filter(
+                Trade.symbol == sig.symbol,
+                Trade.side   == "buy",
+                Trade.status.in_(["filled", "submitted"]),
+            )
+            .order_by(Trade.ts.desc())
+            .first()
+        )
+        if recent_buy and recent_buy.price and recent_buy.price > 0:
+            cost_with_fee = recent_buy.price * (1 + COINBASE_FEE_RATE)
+            net_proceeds  = price * (1 - COINBASE_FEE_RATE)
+            if net_proceeds < cost_with_fee:
+                pct_loss = (net_proceeds / cost_with_fee - 1) * 100
+                if sig.confidence < 0.80:
+                    print(
+                        f"  [executor] FEE-GATE skip sell {sig.symbol} — "
+                        f"net loss after fees ({pct_loss:.2f}%), "
+                        f"conf={sig.confidence:.2f} < 0.80. "
+                        "Raise confidence to 0.80+ for stop-loss override."
+                    )
+                    session.close()
+                    return
+                else:
+                    print(
+                        f"  [executor] STOP-LOSS sell {sig.symbol} — "
+                        f"net loss after fees ({pct_loss:.2f}%) but "
+                        f"conf={sig.confidence:.2f} >= 0.80 (stop-loss override)"
+                    )
 
     from trade.coinbase_client import (
         is_configured as cb_ok, coinbase_symbol,

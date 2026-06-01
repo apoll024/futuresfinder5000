@@ -270,10 +270,10 @@ def init_db():
     session = Session()
     defaults = {
         "trade_mode":              os.getenv("TRADE_MODE", "suggest"),
-        "symbols":                 os.getenv("SYMBOLS", "TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX"),
+        "symbols":                 os.getenv("SYMBOLS", ""),
         "options_enabled":         "false",
         "max_option_premium_usd":  "200",
-        "stocks_enabled":          "true",
+        "stocks_enabled":          "false",
         "crypto_enabled":          "true",
         "crypto_symbols":          os.getenv("CRYPTO_SYMBOLS", "BTC/USD,ETH/USD,SOL/USD"),
         "wallet_enabled":          "true",

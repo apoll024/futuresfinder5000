@@ -25,10 +25,16 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=${LLM_API_URL:-https://models.inference.ai.azure.com/chat/completions}
+      - LLM_API_URL=${LLM_API_URL:-https://models.github.ai/inference/chat/completions}
       - LLM_MODEL=${LLM_MODEL:-gpt-4o}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - MIN_ANALYSIS_GAP_SECONDS=${MIN_ANALYSIS_GAP_SECONDS:-180}
+      - STOCK_ANALYSIS_GAP_SECONDS=${STOCK_ANALYSIS_GAP_SECONDS:-180}
+      - LLM_DAILY_CALL_CAP=${LLM_DAILY_CALL_CAP:-750}
+      - LLM_DAILY_CRITICAL_CAP=${LLM_DAILY_CRITICAL_CAP:-500}
+      - LLM_SYMBOL_COOLDOWN_SECONDS=${LLM_SYMBOL_COOLDOWN_SECONDS:-180}
+      - LLM_CACHE_TTL_SECONDS=${LLM_CACHE_TTL_SECONDS:-300}
+      - LLM_RISK_REVIEW_ENABLED=${LLM_RISK_REVIEW_ENABLED:-true}
       - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
     mem_limit: 768m
     depends_on:
@@ -86,10 +92,12 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=${LLM_API_URL:-https://models.inference.ai.azure.com/chat/completions}
+      - LLM_API_URL=${LLM_API_URL:-https://models.github.ai/inference/chat/completions}
       - LLM_MODEL=${LLM_MODEL:-gpt-4o}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - LLM_DAILY_CALL_CAP=${LLM_DAILY_CALL_CAP:-750}
+      - LLM_DAILY_CRITICAL_CAP=${LLM_DAILY_CRITICAL_CAP:-500}
+      - LLM_CACHE_TTL_SECONDS=${LLM_CACHE_TTL_SECONDS:-300}
       - TRADE_MODE=${TRADE_MODE:-suggest}
       - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
       - MAX_POSITION_USD=${MAX_POSITION_USD:-500}
@@ -122,10 +130,16 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=${LLM_API_URL:-https://models.inference.ai.azure.com/chat/completions}
+      - LLM_API_URL=${LLM_API_URL:-https://models.github.ai/inference/chat/completions}
       - LLM_MODEL=${LLM_MODEL:-gpt-4o}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - MIN_ANALYSIS_GAP_SECONDS=${MIN_ANALYSIS_GAP_SECONDS:-180}
+      - CRYPTO_ANALYSIS_GAP_SECONDS=${CRYPTO_ANALYSIS_GAP_SECONDS:-180}
+      - LLM_DAILY_CALL_CAP=${LLM_DAILY_CALL_CAP:-750}
+      - LLM_DAILY_CRITICAL_CAP=${LLM_DAILY_CRITICAL_CAP:-500}
+      - LLM_SYMBOL_COOLDOWN_SECONDS=${LLM_SYMBOL_COOLDOWN_SECONDS:-180}
+      - LLM_CACHE_TTL_SECONDS=${LLM_CACHE_TTL_SECONDS:-300}
+      - LLM_RISK_REVIEW_ENABLED=${LLM_RISK_REVIEW_ENABLED:-true}
       - CRYPTO_SYMBOLS=${CRYPTO_SYMBOLS:-BTC/USD,ETH/USD,SOL/USD}
       - COINGECKO_API_KEY=${COINGECKO_API_KEY:-}
       - WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY:-}
@@ -147,10 +161,12 @@ services:
       - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
       - ALPACA_PAPER=${ALPACA_PAPER:-true}
       - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=${LLM_API_URL:-https://models.inference.ai.azure.com/chat/completions}
+      - LLM_API_URL=${LLM_API_URL:-https://models.github.ai/inference/chat/completions}
       - LLM_MODEL=${LLM_MODEL:-gpt-4o}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - LLM_DAILY_CALL_CAP=${LLM_DAILY_CALL_CAP:-750}
+      - LLM_DAILY_CRITICAL_CAP=${LLM_DAILY_CRITICAL_CAP:-500}
+      - LLM_CACHE_TTL_SECONDS=${LLM_CACHE_TTL_SECONDS:-300}
       - CRYPTO_SYMBOLS=${CRYPTO_SYMBOLS:-BTC/USD,ETH/USD,SOL/USD}
       - REDUNDANT_FEED_POLL_SECONDS=${REDUNDANT_FEED_POLL_SECONDS:-60}
       - REDUNDANT_FEED_ANALYZE=${REDUNDANT_FEED_ANALYZE:-true}

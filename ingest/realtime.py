@@ -5,7 +5,7 @@ Streams 1-minute bars, writes to PostgreSQL, triggers LLM analysis.
 Resilience:
   - Exponential backoff reconnect on WebSocket disconnect (5s → 120s)
   - Per-symbol circuit breaker: backs off 15 min after 3 consecutive LLM failures
-  - Rate limit: one analysis per symbol per 55 seconds (debounce rapid bars)
+  - Rate limit: one analysis per symbol per configurable cooldown
   - Graceful shutdown on SIGTERM / SIGINT
 """
 import os, sys, time, signal, threading
@@ -31,7 +31,7 @@ _last_analyzed: dict = defaultdict(float)
 
 CIRCUIT_OPEN_AFTER = 3      # failures before backing off
 BACKOFF_SECONDS    = 900    # 15 min
-MIN_ANALYSIS_GAP   = 55     # seconds between analyses per symbol (avoid hammering LLM)
+MIN_ANALYSIS_GAP   = int(os.getenv("STOCK_ANALYSIS_GAP_SECONDS", os.getenv("MIN_ANALYSIS_GAP_SECONDS", "180")))
 
 _shutdown    = False
 _stream_ref  = None         # set in run_stream, used by symbol watcher
