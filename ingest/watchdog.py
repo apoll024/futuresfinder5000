@@ -205,16 +205,6 @@ def check_data_integrity():
         all_symbols    = {r[0] for r in db.query(Bar.symbol).distinct()}
         stale = all_symbols - recent_symbols
         if stale:
-            from zoneinfo import ZoneInfo
-            now_et = datetime.now(ZoneInfo("America/New_York"))
-            market_open = (
-                now_et.weekday() < 5
-                and dtime(9, 30) <= now_et.time() <= dtime(16, 15)
-            )
-            # During market hours flag all stale symbols; outside hours only flag crypto (contains /)
-            if not market_open:
-                stale = {s for s in stale if "/" in s}
-            if stale:
                 issues.append(f"No recent bars for: {', '.join(sorted(stale)[:5])}")
 
         # Check for signals with null confidence or action

@@ -126,7 +126,7 @@ def get_ingest_status() -> dict:
     if not client:
         return {"running": None, "status": "docker unavailable"}
     try:
-        c = client.containers.get("ff_ingest")
+        c = client.containers.get("ff_crypto")
         return {"running": c.status == "running", "status": c.status}
     except Exception as e:
         name = type(e).__name__
@@ -135,9 +135,6 @@ def get_ingest_status() -> dict:
         return {"running": None, "status": str(e)}
 
 
-def get_symbols() -> list[str]:
-    raw = get_setting("symbols", "TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX")
-    return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
 
 def json_safe(value):
@@ -180,8 +177,6 @@ def get_max_option_premium() -> float:
     return float(get_setting("max_option_premium_usd", "200"))
 
 
-def get_stocks_enabled() -> bool:
-    return get_setting("stocks_enabled", "true") == "true"
 
 
 def get_crypto_enabled() -> bool:
@@ -248,7 +243,7 @@ def fetch_top_crypto_symbols(limit: int = 20) -> list[str]:
 
 
 def get_all_positions()-> list[dict]:
-    """Open positions from Coinbase crypto holdings plus Alpaca stock positions."""
+    """Open positions from Coinbase crypto holdings."""
     result = []
     db = Session()
 
@@ -283,37 +278,6 @@ def get_all_positions()-> list[dict]:
                 })
     except Exception as e:
         print(f"[positions] Coinbase error: {e}")
-
-    mode = get_trade_mode()
-    if mode in ("paper", "live"):
-        try:
-            from trade.executor import get_client
-            client = get_client()
-            raw    = client.get_all_positions()
-            for pos in raw:
-                sym       = pos.symbol
-                bar       = db.query(Bar).filter(Bar.symbol == sym).order_by(Bar.ts.desc()).first()
-                cur_price = float(bar.close) if bar else float(pos.current_price or 0)
-                avg_entry = float(pos.avg_entry_price or 0)
-                qty       = float(pos.qty or 0)
-                unreal    = round((cur_price - avg_entry) * qty, 2)
-                pct       = round((cur_price - avg_entry) / avg_entry * 100, 2) if avg_entry else 0.0
-                result.append({
-                    "symbol":         sym,
-                    "qty":            round(qty, 4),
-                    "avg_entry":      round(avg_entry, 4),
-                    "current_price":  round(cur_price, 4),
-                    "unrealized_pnl": unreal,
-                    "pct_change":     pct,
-                    "market_value":   round(qty * cur_price, 2),
-                    "broker":         "alpaca",
-                })
-            return result
-        except Exception as e:
-            print(f"[positions] Alpaca error: {e}")
-            return result
-        finally:
-            db.close()
 
     # Suggest mode — derive net positions from today's trade log
     try:
@@ -517,24 +481,22 @@ def resource_stats() -> list[dict]:
 @app.route("/")
 @login_required
 def index():
-    symbols    = get_symbols()
     trade_mode = get_trade_mode()
     ingest_st  = get_ingest_status()
     now        = datetime.now(ET)
     return render_template("index.html",
-        signals             = latest_signals(symbols + get_crypto_symbols()),
+        signals             = latest_signals(get_crypto_symbols()),
         trades              = recent_trades(),
         pending             = pending_signals(),
         stats               = daily_stats(),
         trade_mode          = trade_mode,
-        trading_on          = trade_mode in ("paper", "live"),
+        trading_on          = trade_mode == "live",
         ingest_running      = ingest_st.get("running"),
         approved_capital    = get_approved_capital(),
         max_position        = get_max_position(),
         daily_loss_limit    = get_daily_loss_limit(),
         options_enabled     = get_options_enabled(),
         max_option_premium  = get_max_option_premium(),
-        stocks_enabled      = get_stocks_enabled(),
         crypto_enabled      = get_crypto_enabled(),
         watchlist_only      = get_watchlist_only(),
         crypto_symbols      = get_crypto_symbols(),
@@ -568,32 +530,24 @@ def api_toggle_ingest():
     client = get_docker_client()
     if not client:
         return jsonify({"error": "Docker socket unavailable — check volume mount"}), 503
-    try:
-        c = client.containers.get("ff_ingest")
-        if c.status == "running":
-            c.stop(timeout=15)
-            for name in ("ff_digest", "ff_crypto"):
-                try:
-                    ct = client.containers.get(name)
-                    if ct.status == "running":
-                        ct.stop(timeout=10)
-                except Exception:
-                    pass
-            return jsonify({"running": False, "action": "stopped"})
-        else:
-            c.start()
-            for name in ("ff_digest", "ff_crypto"):
-                try:
-                    ct = client.containers.get(name)
-                    if ct.status != "running":
-                        ct.start()
-                except Exception:
-                    pass
-            return jsonify({"running": True, "action": "started"})
-    except Exception as e:
-        if "NotFound" in type(e).__name__:
-            return jsonify({"error": "ff_ingest container not found"}), 404
-        return jsonify({"error": str(e)}), 500
+    running = False
+    for name in ("ff_crypto", "ff_digest"):
+        try:
+            ct = client.containers.get(name)
+            running = running or (ct.status == "running")
+        except Exception:
+            pass
+    action = "stopped" if running else "started"
+    for name in ("ff_crypto", "ff_digest"):
+        try:
+            ct = client.containers.get(name)
+            if running and ct.status == "running":
+                ct.stop(timeout=10)
+            elif not running and ct.status != "running":
+                ct.start()
+        except Exception:
+            pass
+    return jsonify({"running": not running, "action": action})
 
 
 @app.route("/api/symbols/add", methods=["POST"])
@@ -602,10 +556,10 @@ def add_symbol():
     sym = request.json.get("symbol", "").strip().upper()
     if not sym:
         return jsonify({"error": "No symbol provided"}), 400
-    symbols = get_symbols()
+    symbols = get_crypto_symbols()
     if sym not in symbols:
-        symbols.append(sym)
-        set_setting("symbols", ",".join(symbols))
+        symbols.append(normalize_crypto_symbol(sym))
+        set_setting("crypto_symbols", ",".join(symbols))
     return jsonify({"symbols": symbols})
 
 
@@ -613,17 +567,11 @@ def add_symbol():
 @login_required
 def remove_symbol():
     sym     = request.json.get("symbol", "").strip().upper()
-    symbols = [s for s in get_symbols() if s != sym]
-    set_setting("symbols", ",".join(symbols))
+    symbols = [s for s in get_crypto_symbols() if s != sym]
+    set_setting("crypto_symbols", ",".join(symbols))
     return jsonify({"symbols": symbols})
 
 
-@app.route("/api/stocks/toggle", methods=["POST"])
-@login_required
-def toggle_stocks():
-    new = "false" if get_stocks_enabled() else "true"
-    set_setting("stocks_enabled", new)
-    return jsonify({"stocks_enabled": new == "true"})
 
 
 @app.route("/api/watchlist-mode/toggle", methods=["POST"])
@@ -775,78 +723,8 @@ def wallet_refresh():
         return jsonify({"configured": False, "error": str(e)})
 
 
-@app.route("/stocks")
-@login_required
-def stocks_page():
-    symbols    = get_symbols()
-    trade_mode = get_trade_mode()
-    ingest_st  = get_ingest_status()
-    now        = datetime.now(ET)
-    return render_template("stocks.html",
-        signals             = latest_signals(symbols),
-        trades              = recent_trades(),
-        stats               = daily_stats(),
-        trade_mode          = trade_mode,
-        trading_on          = trade_mode in ("paper", "live"),
-        ingest_running      = ingest_st.get("running"),
-        approved_capital    = get_approved_capital(),
-        max_position        = get_max_position(),
-        daily_loss_limit    = get_daily_loss_limit(),
-        options_enabled     = get_options_enabled(),
-        max_option_premium  = get_max_option_premium(),
-        stocks_enabled      = get_stocks_enabled(),
-        watchlist_only      = get_watchlist_only(),
-        llm_ok              = llm_healthy(),
-        now                 = now.strftime("%Y-%m-%d %H:%M:%S ET"),
-        market_open         = True,  # crypto markets are 24/7
-    )
 
 
-@app.route("/api/alpaca/account")
-@login_required
-def api_alpaca_account():
-    """Return Alpaca account balances and all open positions."""
-    import os as _os
-    from alpaca.trading.client import TradingClient
-    api_key = _os.getenv("ALPACA_API_KEY")
-    secret  = _os.getenv("ALPACA_SECRET_KEY")
-    paper   = _os.getenv("ALPACA_PAPER", "true").lower() == "true"
-    if not api_key or not secret:
-        return jsonify({"configured": False, "error": "Alpaca keys not set"})
-    try:
-        client    = TradingClient(api_key, secret, paper=paper)
-        acct      = client.get_account()
-        positions = client.get_all_positions()
-        pos_list  = []
-        total_mv  = 0.0
-        total_pnl = 0.0
-        for p in positions:
-            mv  = float(p.market_value  or 0)
-            pnl = float(p.unrealized_pl or 0)
-            total_mv  += mv
-            total_pnl += pnl
-            pos_list.append({
-                "symbol":         p.symbol,
-                "qty":            float(p.qty),
-                "avg_entry":      round(float(p.avg_entry_price or 0), 2),
-                "current_price":  round(float(p.current_price   or 0), 2),
-                "market_value":   round(mv,  2),
-                "unrealized_pnl": round(pnl, 2),
-                "pct_change":     round(float(p.unrealized_plpc or 0) * 100, 2),
-            })
-        return jsonify({
-            "configured":      True,
-            "paper":           paper,
-            "cash":            round(float(acct.cash            or 0), 2),
-            "buying_power":    round(float(acct.buying_power    or 0), 2),
-            "portfolio_value": round(float(acct.portfolio_value or 0), 2),
-            "equity":          round(float(acct.equity          or 0), 2),
-            "total_mv":        round(total_mv,  2),
-            "total_pnl":       round(total_pnl, 2),
-            "positions":       pos_list,
-        })
-    except Exception as e:
-        return jsonify({"configured": False, "error": str(e)[:160]})
 
 
 @app.route("/api/coinbase/holdings")
@@ -946,7 +824,6 @@ def crypto_engine_status():
         "engine_cls":      engine_cls,
         "trade_mode":      mode,
         "crypto_enabled":  on,
-        "stocks_enabled":  get_stocks_enabled(),
         "watchlist_only":  get_watchlist_only(),
         "ingest_running":  ingest_st.get("running", False),
         "pnl":             stats["pnl"],
@@ -980,7 +857,7 @@ def update_settings():
             except ValueError:
                 return jsonify({"error": f"Invalid value for {key}"}), 400
     # Boolean settings
-    for key in ("options_enabled", "stocks_enabled", "crypto_enabled"):
+    for key in ("options_enabled", "crypto_enabled"):
         if key in data:
             val = "true" if str(data[key]).lower() in ("true", "1", "yes") else "false"
             set_setting(key, val)
@@ -993,7 +870,7 @@ def update_settings():
 @app.route("/api/signals")
 @login_required
 def api_signals():
-    all_syms = get_symbols() + get_crypto_symbols()
+    all_syms = get_crypto_symbols()
     return jsonify(latest_signals(all_syms))
 
 
@@ -1062,7 +939,6 @@ def api_activity():
     # Container liveness via docker SDK (best-effort)
     services = [
         {"name": "crypto",   "container": "ff_crypto"},
-        {"name": "ingest",   "container": "ff_ingest"},
         {"name": "api",      "container": "ff_api"},
         {"name": "settler",  "container": "ff_settler"},
         {"name": "watchdog", "container": "ff_watchdog"},
@@ -1091,7 +967,6 @@ def api_stats():
                     "approved_capital": get_approved_capital(),
                     "max_position":     get_max_position(),
                     "daily_loss_limit": get_daily_loss_limit(),
-                    "stocks_enabled":   get_stocks_enabled(),
                     "crypto_enabled":   get_crypto_enabled(),
                     "llm_ok":           llm_healthy(),
                     "ingest_running":   ingest_st.get("running")})
@@ -1402,8 +1277,8 @@ def api_positions_ai_review():
 
     messages = [
         {"role": "system", "content": (
-            "You are FuturesFinder5000 — an autonomous leveraged ETF trading agent. "
-            "Review positions for profitable risk/reward, using caution without rigid checklist gates. "
+            "You are FuturesFinder5000 — an autonomous crypto trading agent. "
+            "Review crypto positions for profitable risk/reward, using caution without rigid checklist gates. "
             "Always cite actual numbers."
         )},
         {"role": "user", "content": prompt},
@@ -1491,11 +1366,8 @@ def api_ai_advisor():
     trades      = recent_trades(20)
     pending     = pending_signals(10)
     crypto_syms = get_crypto_symbols()
-    stock_syms  = get_symbols()
-    all_sigs    = latest_signals(crypto_syms + stock_syms[:5])
+    all_sigs    = latest_signals(crypto_syms)
     now         = datetime.now(ET)
-    equities_open = "09:45" <= now.strftime("%H:%M") <= "15:45"
-
     sig_summary = [
         {"symbol": s["symbol"], "action": s["action"],
          "confidence": s["confidence"], "note": (s["reasoning"] or "")[:100]}
@@ -1503,10 +1375,8 @@ def api_ai_advisor():
     ]
 
     context = (
-        f"Date/Time: {now.strftime('%Y-%m-%d %H:%M ET')} | "
-        f"Equities session: {'OPEN' if equities_open else 'CLOSED'} | Crypto market: OPEN 24/7\n"
+        f"Date/Time: {now.strftime('%Y-%m-%d %H:%M ET')} | Crypto market: OPEN 24/7\n"
         f"Crypto watchlist: {', '.join(crypto_syms)}\n"
-        f"Stock watchlist: {', '.join(stock_syms)}\n\n"
         f"Recent trades (last 20):\n{json.dumps(trades, indent=2)}\n\n"
         f"Pending signals (planned trades):\n{json.dumps(pending, indent=2)}\n\n"
         f"Current signals:\n{json.dumps(sig_summary, indent=2)}"
@@ -1524,7 +1394,7 @@ def api_ai_advisor():
 
     messages = [
         {"role": "system", "content": (
-            "You are FuturesFinder5000 — an autonomous crypto and leveraged ETF trading AI. "
+            "You are FuturesFinder5000 — an autonomous crypto trading AI. "
             "Analyze trade history and signals to provide focused, actionable advisor reports. "
             "Be concise, cite real numbers, and give specific ticker symbols for watchlist recommendations."
         )},
@@ -1609,7 +1479,7 @@ def api_kb_list():
 @login_required
 def api_kb_add():
     data    = request.json or {}
-    mode    = data.get("mode", "text")   # "text" | "url"
+    mode    = data.get("mode", "text")   # "text" | Crypto market: OPEN 24/7\n"url"
     title   = data.get("title", "").strip()
     tags    = data.get("tags", "").strip().upper()
     content = data.get("content", "").strip()
@@ -1710,14 +1580,11 @@ def api_llm_status():
 
 def build_chat_context() -> str:
     """Snapshot of current market state injected into every LLM chat turn."""
-    stock_symbols = get_symbols()
     crypto_symbols = get_crypto_symbols()
-    sigs      = latest_signals(stock_symbols + crypto_symbols)
+    sigs      = latest_signals(crypto_symbols)
     stats     = daily_stats()
     ingest_st = get_ingest_status()
     now       = datetime.now(ET)
-    equities_open = "09:45" <= now.strftime("%H:%M") <= "15:45"
-
     sig_lines = "\n".join(
         f"  {s['symbol']}: {s['action'].upper()} conf={s['confidence']}%"
         f" last=${s['last_price'] or '—'}"
@@ -1775,14 +1642,12 @@ def build_chat_context() -> str:
     ) or "  No recent trade records"
 
     return (
-        f"Time: {now.strftime('%Y-%m-%d %H:%M ET')} | "
-        f"Equities session: {'OPEN' if equities_open else 'CLOSED'} | Crypto market: OPEN 24/7\n"
+        f"Time: {now.strftime('%Y-%m-%d %H:%M ET')} | Crypto market: OPEN 24/7\n"
         f"Trade mode: {get_trade_mode()} | "
         f"Approved capital: ${get_approved_capital():,.0f} | "
         f"Max position: ${get_max_position():,.0f} | "
         f"Daily loss limit: ${get_daily_loss_limit():,.0f}\n"
         f"Options trading: {'ENABLED (max premium ${:.0f})'.format(get_max_option_premium()) if get_options_enabled() else 'DISABLED'} | "
-        f"Stocks: {'ENABLED' if get_stocks_enabled() else 'DISABLED'} | "
         f"Crypto: {'ENABLED' if get_crypto_enabled() else 'DISABLED'}\n"
         f"News digest last run: {get_setting('news_digest_last_run', 'Never')}\n"
         f"Ingest: {'running' if ingest_st.get('running') else 'stopped'} | "
@@ -1798,7 +1663,6 @@ def build_chat_context() -> str:
         f"Coinbase current holdings:\n{cb_lines}\n"
         "If older signal reasoning says Coinbase is unconfigured, treat it as stale and defer to the live Coinbase SDK status above.\n"
         f"Crypto derivatives feed:\n{derivative_lines}\n"
-        f"Stock watchlist: {', '.join(stock_symbols)}\n"
         f"Crypto watchlist: {', '.join(crypto_symbols)}\n"
         f"Watchlist signals:\n{sig_lines if sig_lines else '  No signals yet'}"
     )
@@ -1806,40 +1670,153 @@ def build_chat_context() -> str:
 
 # ── API: chat ─────────────────────────────────────────────────────────────────
 
-CHAT_SYSTEM_PROMPT = """You are FuturesFinder5000 — an autonomous leveraged ETF day-trading agent running live on a dedicated Oracle Cloud server.
+CHAT_SYSTEM_PROMPT = """You are FuturesFinder5000 — an autonomous crypto trading agent running live on a dedicated Oracle Cloud server.
 
 YOUR MISSION:
-You exist to grow the capital allocated to you through disciplined, rules-based trading of leveraged ETFs and crypto assets. You are not a generic assistant — you are a trading agent first. Every answer you give should reflect that purpose.
+You exist to grow capital through disciplined, rules-based crypto trading. You are not a generic assistant — you are a trading agent first. Every answer should reflect that purpose.
 
 YOUR CAPABILITIES:
-- You analyze real-time 1-minute bar data and technical indicators when each asset class is tradable
-- You issue buy/sell/hold signals that get executed automatically against your allocated capital
-- You track your own P&L, win rate, and open positions in a live PostgreSQL database
-- You can autonomously add new symbols to your watchlist if you identify a strong setup
-- Crypto markets trade 24/7; do not say "the market is closed" for crypto just because the equities session is closed
-- You have a knowledge base of trading articles and strategies you draw from
+- You analyze real-time 1-minute bar data and technical indicators for crypto assets 24/7
+- You issue buy/sell/hold signals executed automatically against your allocated capital
+- You track P&L, win rate, and open positions in a live PostgreSQL database
+- You can add new crypto symbols to your watchlist when you identify strong setups
+- Crypto markets trade 24/7 — there is no market-closed concept here
 
 HOW YOU TRADE:
-- Your broad goal is to make profit while using caution and respecting configured risk limits.
-- You decide when to buy, sell, or hold by weighing the full live snapshot: trend, VWAP, volume, MACD, RSI, derivatives, news, holdings, prior outcomes, and available capital.
-- Indicators are evidence, not rigid gates. You may act when the overall expected value is favorable even if some indicators conflict.
-- You should avoid reckless overtrading, but do not default to HOLD just because a checklist is not perfect.
+- Your goal is profitable growth while respecting configured risk limits
+- You decide when to act by weighing: trend, VWAP, volume, MACD, RSI, derivatives, news, holdings, and available capital
+- Indicators are evidence, not rigid gates — act when overall expected value is favorable
+- Avoid reckless overtrading, but do not default to HOLD when conditions are unclear
 
 CAPITAL DISCIPLINE:
-- Capital preservation matters, but the objective is profitable growth over time.
-- You honor configured capital limits and daily loss protection.
-- You size positions within approved capital limits set by the operator
-- Your performance is measured in net daily P&L and cumulative growth over time
+- Capital preservation matters, but the objective is growth over time
+- Honor configured capital limits and daily loss protection
+- Size positions within approved capital limits set by the operator
+- Performance is measured in net daily P&L and cumulative growth
 
 HOW TO RESPOND:
-- Be direct and data-driven. Always cite actual values from the live snapshot when answering.
-- Distinguish equities from crypto: if equities are closed, say "equities are closed" but crypto remains tradable 24/7.
-- If crypto data/signals are missing, say the crypto data is missing/stale; do not claim crypto cannot trade due to market hours.
-- If a value is not in the snapshot or persistent memory, say so — never fabricate data.
-- You are given live database-backed context in every turn; use it instead of claiming you cannot access the database.
-- When asked about performance, reference actual P&L and trade history from the snapshot.
-- When asked for a recommendation, give one — you are a trading agent, not a disclaimer machine.
-- You DO have access to database-backed live context through the snapshot and persistent chat memory. Never claim you cannot inspect the database, terminal, or server; instead, use the supplied database context and say when a specific value is not present in it."""
+- Be direct and data-driven — cite actual values from the live snapshot
+- If data is missing or stale, say so — never fabricate
+- You have live database-backed context in every turn; use it instead of claiming you cannot access the database
+- When asked for a recommendation, give one — you are a trading agent, not a disclaimer machine
+- Never claim you cannot inspect the database or server; use the supplied context and note when a specific value is absent"""
+
+
+_morning_brief_cache: dict = {"ts": 0.0, "data": None}
+_nba_standings_cache: dict = {"ts": 0.0, "data": None}
+_BRIEF_TTL = 600   # 10 min
+_NBA_TTL   = 1800  # 30 min
+
+
+@app.route("/api/morning-brief")
+@login_required
+def api_morning_brief():
+    """Cached crypto morning brief with F&G, top movers, headlines, blockers, and LLM insight."""
+    import time as _t
+    now_ts = _t.time()
+    if _morning_brief_cache["data"] and (now_ts - _morning_brief_cache["ts"]) < _BRIEF_TTL:
+        return jsonify(_morning_brief_cache["data"])
+    db = Session()
+    try:
+        fg = {}
+        market_ctx = {}
+        try:
+            from analyze.crypto_analyze import fetch_fear_greed, fetch_market_context
+            fg = fetch_fear_greed() or {}
+            market_ctx = fetch_market_context() or {}
+        except Exception:
+            pass
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        news = (db.query(KnowledgeItem).filter(KnowledgeItem.ts >= cutoff)
+                .order_by(KnowledgeItem.ts.desc()).limit(8).all())
+        headlines = [{"title": n.title, "source": getattr(n, "source", "") or "",
+                      "ts": n.ts.strftime("%H:%M")} for n in news]
+        crypto_syms = get_crypto_symbols()
+        sigs = latest_signals(crypto_syms)
+        top_movers = sorted([s for s in sigs if s["confidence"] >= 55],
+                            key=lambda x: x["confidence"], reverse=True)[:5]
+        blockers = []
+        if not llm_healthy():
+            blockers.append("LLM offline — analysis halted")
+        if not get_ingest_status().get("running"):
+            blockers.append("Ingest stopped — no fresh data")
+        if get_trade_mode() == "off":
+            blockers.append("Trading is OFF")
+        try:
+            from trade.coinbase_client import is_configured as cb_ok, get_crypto_balance
+            if cb_ok():
+                usdc = get_crypto_balance("USD") + get_crypto_balance("USDC")
+                if usdc < 50:
+                    blockers.append(f"Low buying power — ${usdc:.2f} USDC available")
+        except Exception:
+            pass
+        insight = ""
+        if llm_healthy():
+            fg_text = (f"Fear & Greed: {fg.get('value','N/A')} ({fg.get('classification','')})"
+                       if fg else "F&G unavailable.")
+            movers_text = "\n".join(
+                f"- {s['symbol']}: {s['action'].upper()} conf={s['confidence']}%"
+                for s in top_movers) or "No strong signals."
+            news_text = "\n".join(f"- {h['title']}" for h in headlines[:5]) or "No recent headlines."
+            try:
+                r = requests.post(LLM_API_URL, headers=_llm_headers(),
+                    json={"model": LLM_MODEL, "temperature": 0.4, "max_tokens": 220,
+                          "messages": [
+                              {"role": "system", "content":
+                                  "You are FuturesFinder5000's morning briefing module. "
+                                  "Generate a concise 4-6 sentence crypto market brief covering sentiment, "
+                                  "notable signals, and 1-2 actionable insights. Be specific and brief."},
+                              {"role": "user", "content":
+                                  f"{fg_text}\n\nTop signals:\n{movers_text}\n\n"
+                                  f"Recent news:\n{news_text}\n\nProvide a morning market summary."},
+                          ]}, timeout=(10, 60))
+                if r.status_code == 200:
+                    insight = r.json()["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                insight = f"(LLM error: {str(e)[:80]})"
+        result = {"fear_greed": fg, "market_context": market_ctx, "headlines": headlines,
+                  "top_movers": top_movers, "blockers": blockers, "insight": insight,
+                  "trade_mode": get_trade_mode(),
+                  "ts": datetime.now(ET).strftime("%Y-%m-%d %H:%M ET")}
+        _morning_brief_cache.update({"ts": now_ts, "data": result})
+        return jsonify(result)
+    finally:
+        db.close()
+
+
+@app.route("/api/nba-standings")
+@login_required
+def api_nba_standings():
+    """Return current NBA standings (30-min cache via ESPN public API)."""
+    import time as _t
+    now_ts = _t.time()
+    if _nba_standings_cache["data"] and (now_ts - _nba_standings_cache["ts"]) < _NBA_TTL:
+        return jsonify(_nba_standings_cache["data"])
+    try:
+        resp = requests.get(
+            "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings",
+            params={"season": 2025}, timeout=8)
+        resp.raise_for_status()
+        raw = resp.json()
+        conferences = []
+        for conf in raw.get("children", []):
+            teams = []
+            for entry in conf.get("standings", {}).get("entries", []):
+                t = entry.get("team", {})
+                stats = {s["name"]: s.get("displayValue", "") for s in entry.get("stats", [])}
+                teams.append({
+                    "rank": len(teams) + 1,
+                    "name": t.get("shortDisplayName", t.get("displayName", "")),
+                    "abbr": t.get("abbreviation", ""),
+                    "wins": stats.get("wins", "?"), "losses": stats.get("losses", "?"),
+                    "pct": stats.get("winPercent", "?"), "gb": stats.get("gamesBehind", "-"),
+                })
+            conferences.append({"conference": conf.get("name", ""), "teams": teams})
+        result = {"conferences": conferences, "ts": datetime.now(ET).strftime("%H:%M ET")}
+        _nba_standings_cache.update({"ts": now_ts, "data": result})
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)[:120], "conferences": []}), 500
 
 
 def _chat_session_key() -> str:
@@ -2122,7 +2099,7 @@ Write (internal): POST /api/inbox/write {"category","title","body","source"}
 Categories: update, alert, warning, resource, info
 
 Context partition: Crypto AI only sees crypto (symbol contains "/").
-                   Stocks AI only sees stock signals (symbol without "/").
+                   Crypto signals use "SYMBOL/USD" format.
 === END REFERENCE GUIDE ===
 """
 

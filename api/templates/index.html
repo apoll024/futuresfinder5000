@@ -1059,6 +1059,35 @@
       <button class="btn-wallet-refresh cb-refresh-btn" type="button" onclick="refreshCoinbaseData(this)">↻ Refresh Balances</button>
     </div>
 
+    <!-- ── Morning Brief ── -->
+    <div class="side-panel" id="morning-brief-panel">
+      <div class="panel-hdr" style="cursor:pointer;" onclick="toggleSection('brief-body','brief-chevron');if(document.getElementById('brief-body').classList.contains('hidden')||!window._briefLoaded)loadMorningBrief()">
+        <span class="dot green"></span>
+        Morning Brief
+        <span style="margin-left:auto;font-size:10px;color:var(--muted);" id="brief-chevron">▶</span>
+      </div>
+      <div id="brief-body" class="collapsible hidden">
+        <div id="brief-content" style="padding:6px 0;font-size:11px;">
+          <div style="color:var(--muted);text-align:center;padding:8px;">Click to load brief…</div>
+        </div>
+        <button class="btn btn-ghost" style="width:100%;margin-top:4px;font-size:10px;" onclick="loadMorningBrief(true)">↻ Refresh</button>
+      </div>
+    </div>
+
+    <!-- ── NBA Standings ── -->
+    <div class="side-panel" id="nba-panel">
+      <div class="panel-hdr" style="cursor:pointer;" onclick="toggleSection('nba-body','nba-chevron');if(document.getElementById('nba-body').classList.contains('hidden')||!window._nbaLoaded)loadNBAStandings()">
+        <span class="dot" style="background:#ff6b35;"></span>
+        NBA Standings
+        <span style="margin-left:auto;font-size:10px;color:var(--muted);" id="nba-chevron">▶</span>
+      </div>
+      <div id="nba-body" class="collapsible hidden">
+        <div id="nba-content" style="padding:4px 0;font-size:10px;">
+          <div style="color:var(--muted);text-align:center;padding:8px;">Click to load standings…</div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Knowledge Base (collapsible) ── -->
     <div class="side-panel">
       <div class="panel-hdr" style="cursor:pointer;" onclick="toggleSection('kb-body','kb-chevron')">
@@ -1186,16 +1215,7 @@ async function toggleCrypto() {
   btn.disabled = false;
 }
 
-async function toggleStocks() {
-  const btn = document.getElementById('stocks-toggle');
-  btn.disabled = true;
-  const data = await fetch('/api/stocks/toggle', {method:'POST'}).then(r=>r.json());
-  const on   = data.stocks_enabled;
-  btn.className   = 'toggle-btn ' + (on ? 'on' : 'off');
-  btn.innerHTML   = '📈 Stock Trading <span class="tog-state">' + (on ? 'ON' : 'OFF') + '</span>';
-  toast(on ? 'Stock Trading ENABLED' : 'Stock Trading DISABLED');
-  btn.disabled = false;
-}
+
 
 async function toggleWatchlistMode() {
   const btn = document.getElementById('watchlist-toggle');
@@ -2219,6 +2239,87 @@ async function runBacktest() {
     outEl.innerHTML = `<p style="color:#e74c3c">Error: ${e}</p>`;
   }
 }
+
+// ── Morning Brief ─────────────────────────────────────────────────────────
+window._briefLoaded = false;
+async function loadMorningBrief(force=false) {
+  window._briefLoaded = true;
+  const el = document.getElementById('brief-content');
+  if (!force && el && el.querySelector('.brief-insight')) return;
+  el.innerHTML = '<div style="color:var(--muted);text-align:center;padding:8px;">Loading…</div>';
+  try {
+    const d = await fetch('/api/morning-brief').then(r=>r.json());
+    let html = '';
+    if (d.fear_greed && d.fear_greed.value) {
+      const val = parseInt(d.fear_greed.value);
+      const col = val < 25 ? '#e74c3c' : val < 45 ? '#e67e22' : val < 55 ? '#f1c40f' : val < 75 ? '#2ecc71' : '#27ae60';
+      html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;padding:4px 6px;background:rgba(255,255,255,.04);border-radius:4px;">
+        <span style="font-size:18px;font-weight:700;color:${col};">${val}</span>
+        <div><div style="font-size:9px;color:var(--muted);">Fear &amp; Greed</div>
+        <div style="font-size:10px;font-weight:600;">${d.fear_greed.classification||''}</div></div></div>`;
+    }
+    if (d.blockers && d.blockers.length) {
+      html += `<div style="background:rgba(231,76,60,.15);border-left:3px solid #e74c3c;padding:4px 6px;margin-bottom:6px;border-radius:0 4px 4px 0;">
+        ${d.blockers.map(b=>`<div style="font-size:10px;color:#e74c3c;">⚠ ${b}</div>`).join('')}</div>`;
+    }
+    if (d.top_movers && d.top_movers.length) {
+      html += `<div style="margin-bottom:6px;"><div style="font-size:9px;color:var(--muted);margin-bottom:3px;">TOP SIGNALS</div>
+        ${d.top_movers.map(s=>{
+          const col = s.action==='buy'?'#2ecc71':'#e74c3c';
+          return `<div style="display:flex;justify-content:space-between;font-size:10px;padding:1px 0;">
+            <span>${s.symbol}</span><span style="color:${col};font-weight:600;">${s.action.toUpperCase()} ${s.confidence}%</span></div>`;
+        }).join('')}</div>`;
+    }
+    if (d.headlines && d.headlines.length) {
+      html += `<div style="margin-bottom:6px;"><div style="font-size:9px;color:var(--muted);margin-bottom:3px;">NEWS</div>
+        ${d.headlines.slice(0,4).map(h=>`<div style="font-size:9px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.05);line-height:1.3;">${h.title}</div>`).join('')}</div>`;
+    }
+    if (d.insight) {
+      html += `<div class="brief-insight" style="font-size:10px;line-height:1.5;color:var(--fg);background:rgba(255,255,255,.03);padding:6px;border-radius:4px;border-left:2px solid var(--accent);">${d.insight}</div>`;
+    }
+    html += `<div style="font-size:9px;color:var(--muted);text-align:right;margin-top:4px;">${d.ts||''}</div>`;
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--muted);font-size:10px;">Error: ${e.message}</div>`;
+  }
+}
+
+// ── NBA Standings ──────────────────────────────────────────────────────────
+window._nbaLoaded = false;
+async function loadNBAStandings() {
+  window._nbaLoaded = true;
+  const el = document.getElementById('nba-content');
+  el.innerHTML = '<div style="color:var(--muted);text-align:center;padding:8px;">Loading…</div>';
+  try {
+    const d = await fetch('/api/nba-standings').then(r=>r.json());
+    if (d.error) { el.innerHTML = `<div style="color:var(--muted);font-size:10px;">${d.error}</div>`; return; }
+    let html = '';
+    for (const conf of d.conferences) {
+      html += `<div style="margin-bottom:8px;"><div style="font-size:9px;color:var(--muted);font-weight:700;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px;">${conf.conference}</div>
+        <table style="width:100%;border-collapse:collapse;font-size:9px;">
+          <thead><tr style="color:var(--muted);">
+            <th style="text-align:left;padding:1px 2px;">#</th>
+            <th style="text-align:left;padding:1px 2px;">Team</th>
+            <th style="text-align:right;padding:1px 4px;">W</th>
+            <th style="text-align:right;padding:1px 4px;">L</th>
+            <th style="text-align:right;padding:1px 4px;">GB</th>
+          </tr></thead><tbody>
+          ${conf.teams.slice(0,8).map((t,i)=>`<tr style="${i<8?'':''}">
+            <td style="padding:1px 2px;color:var(--muted);">${t.rank}</td>
+            <td style="padding:1px 2px;font-weight:${t.rank<=8?'600':'400'};">${t.name}</td>
+            <td style="padding:1px 4px;text-align:right;">${t.wins}</td>
+            <td style="padding:1px 4px;text-align:right;">${t.losses}</td>
+            <td style="padding:1px 4px;text-align:right;color:var(--muted);">${t.gb}</td>
+          </tr>`).join('')}
+        </tbody></table></div>`;
+    }
+    html += `<div style="font-size:9px;color:var(--muted);text-align:right;">${d.ts||''}</div>`;
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--muted);font-size:10px;">Error loading standings</div>`;
+  }
+}
+
 </script>
 
 <!-- ══ INBOX MODAL ══════════════════════════════════════════════════════════ -->

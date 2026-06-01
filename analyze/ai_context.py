@@ -32,7 +32,7 @@ You have 7 specialized agents running alongside you. Reference this when asked a
 AGENT 1 — DATA INTEGRITY MONITOR (watchdog, every 5 min)
   Detects price bar gaps, missing data, schema issues. Writes alert to inbox when problems found.
 
-AGENT 2 — NEWS SENTIMENT ANALYZER (digest service, 5-min crypto / 7am+noon stocks)
+AGENT 2 — NEWS SENTIMENT ANALYZER (digest service, runs every 5 min for crypto news)
   Scores each news article -1.0 (bearish) to +1.0 (bullish) using keyword analysis.
   Sentiment stored on every KnowledgeItem. Aggregated in /api/analytics.
 
@@ -149,8 +149,8 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
 
     Parameters
     ----------
-    symbol  : trading symbol, e.g. "TQQQ" or "BTC/USD"
-    service : "analyze" for stocks, "crypto" for crypto
+    symbol  : trading symbol, e.g. "BTC/USD"
+    service : "crypto" (all symbols are crypto)
     """
     lines = ["\n=== DB CONTEXT SNAPSHOT (read this before acting) ==="]
     db = Session()
@@ -158,14 +158,9 @@ def build_db_context(symbol: str, service: str = "analyze") -> str:
     cutoff_5m = datetime.utcnow() - timedelta(minutes=5)
     cutoff_1h = datetime.utcnow() - timedelta(hours=1)
 
-    # ── Service partition: crypto sees only crypto symbols, stocks sees only stocks ──
-    is_crypto = service == "crypto"
+    is_crypto = True
     def _sym_filter(q, model):
-        """Restrict query to the correct asset class."""
-        if is_crypto:
-            return q.filter(model.symbol.like("%/%"))
-        else:
-            return q.filter(~model.symbol.like("%/%"))
+        return q.filter(model.symbol.like("%/%"))
 
     try:
         # 1. Recent signals for this symbol (last 5, newest first)

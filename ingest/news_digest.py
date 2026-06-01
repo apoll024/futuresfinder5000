@@ -281,9 +281,6 @@ def run_market_digest() -> int:
             break
         total += ingest_rss_feed(feed)
 
-    symbols_raw = get_setting("symbols", "TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY")
-    symbols     = [s.strip() for s in symbols_raw.split(",") if s.strip()][:12]
-    total      += ingest_yfinance_news(symbols)
 
     elapsed = (datetime.now(ET) - start).total_seconds()
     set_setting("news_digest_last_run",   start.strftime("%Y-%m-%d %H:%M ET"))

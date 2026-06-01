@@ -16,32 +16,6 @@ services:
       timeout: 10s
       retries: 5
 
-  ingest:
-    build: .
-    container_name: ff_ingest
-    command: python ingest/realtime.py
-    environment:
-      - ALPACA_API_KEY=${ALPACA_API_KEY}
-      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
-      - ALPACA_PAPER=${ALPACA_PAPER:-true}
-      - DB_URL=postgresql://ff_user:${DB_PASSWORD}@db:5432/futuresfinder
-      - LLM_API_URL=${LLM_API_URL:-https://models.github.ai/inference/chat/completions}
-      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - MIN_ANALYSIS_GAP_SECONDS=${MIN_ANALYSIS_GAP_SECONDS:-180}
-      - STOCK_ANALYSIS_GAP_SECONDS=${STOCK_ANALYSIS_GAP_SECONDS:-180}
-      - STOCK_MAX_ANALYSES_PER_MINUTE=${STOCK_MAX_ANALYSES_PER_MINUTE:-4}
-      - LLM_DAILY_CALL_CAP=${LLM_DAILY_CALL_CAP:-750}
-      - LLM_DAILY_CRITICAL_CAP=${LLM_DAILY_CRITICAL_CAP:-500}
-      - LLM_SYMBOL_COOLDOWN_SECONDS=${LLM_SYMBOL_COOLDOWN_SECONDS:-180}
-      - LLM_CACHE_TTL_SECONDS=${LLM_CACHE_TTL_SECONDS:-300}
-      - LLM_RISK_REVIEW_ENABLED=${LLM_RISK_REVIEW_ENABLED:-true}
-      - SYMBOLS=${SYMBOLS:-TQQQ,SQQQ,UPRO,SPXU,SOXL,SOXS,QQQ,SPY,SOXX}
-    mem_limit: 768m
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
 
   settler:
     build: .
