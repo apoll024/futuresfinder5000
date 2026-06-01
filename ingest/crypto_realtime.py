@@ -30,9 +30,13 @@ _last_analyzed: dict = defaultdict(float)
 CIRCUIT_OPEN_AFTER = 3
 BACKOFF_SECONDS    = 900    # 15 min
 MIN_ANALYSIS_GAP   = int(os.getenv("CRYPTO_ANALYSIS_GAP_SECONDS", os.getenv("MIN_ANALYSIS_GAP_SECONDS", "180")))
+MAX_ANALYSES_PER_WINDOW = int(os.getenv("CRYPTO_MAX_ANALYSES_PER_MINUTE", "6"))
+ANALYSIS_WINDOW_SECONDS = 60
 
 _shutdown    = False
 _stream_ref  = None
+_analysis_window_start = 0.0
+_analysis_window_count = 0
 _known_syms: set = set()
 ALPACA_STREAM_SYMBOLS = {
     s.strip().upper() for s in os.getenv(
@@ -49,6 +53,17 @@ def _handle_exit(signum, frame):
 
 signal.signal(signal.SIGTERM, _handle_exit)
 signal.signal(signal.SIGINT,  _handle_exit)
+
+
+def _analysis_budget_available(now: float) -> bool:
+    global _analysis_window_start, _analysis_window_count
+    if now - _analysis_window_start >= ANALYSIS_WINDOW_SECONDS:
+        _analysis_window_start = now
+        _analysis_window_count = 0
+    if _analysis_window_count >= MAX_ANALYSES_PER_WINDOW:
+        return False
+    _analysis_window_count += 1
+    return True
 
 
 async def bar_handler(bar):
@@ -90,6 +105,10 @@ async def bar_handler(bar):
     if now < _backoff_until[bar.symbol]:
         remaining = int(_backoff_until[bar.symbol] - now)
         print(f"  [{bar.symbol}] Circuit open — {remaining}s remaining")
+        return
+
+    if not _analysis_budget_available(now):
+        print(f"  [{bar.symbol}] Analysis budget full — skipping this minute")
         return
 
     _last_analyzed[bar.symbol] = now
