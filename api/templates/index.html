@@ -630,15 +630,6 @@
     .cb-status-ready  { background: rgba(16,185,129,.1);  color: var(--green2);  border-color: rgba(16,185,129,.3); }
     .cb-status-warn   { background: rgba(217,119,6,.1);   color: #fbbf24;        border-color: rgba(217,119,6,.3); }
     .cb-status-error  { background: rgba(239,68,68,.1);   color: var(--red2);    border-color: rgba(239,68,68,.3); }
-    .coin-limit-item  { display:flex; flex-direction:column; gap:3px; min-width:110px; }
-    .coin-limit-label { font-size:9px; color:var(--muted); font-weight:700; letter-spacing:.5px; text-transform:uppercase; }
-    .coin-limit-input { background:var(--surface2); border:1px solid var(--border2); color:var(--text); padding:4px 8px; border-radius:5px; width:100%; }
-    .coin-limit-input:focus { outline:none; border-color:var(--purple); }
-    .readiness-item   { display:flex; align-items:center; gap:6px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface); font-size:10px; min-width:140px; }
-    .readiness-dot    { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-    .readiness-dot.ready  { background:var(--green2); box-shadow: 0 0 6px var(--green2); }
-    .readiness-dot.warn   { background:#fbbf24; }
-    .readiness-dot.error  { background:var(--red2); }
     .cb-balance-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid var(--border); font-size:10px; }
     .cb-balance-row:last-child { border-bottom:none; }
     .cb-balance-currency { font-weight:700; color:var(--purple3); }
@@ -870,18 +861,7 @@
       <span style="margin-left:auto;font-size:10px;color:var(--muted);" id="cb-portfolio-total"></span>
     </div>
     <div class="section">
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <div style="font-size:10px;font-weight:800;color:var(--purple2);letter-spacing:.5px;">PER-COIN TRADE LIMITS</div>
-          <button class="btn btn-save" onclick="saveCoinLimits()">Save Limits</button>
-        </div>
-        <div id="coin-limits-grid" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
-      </div>
 
-      <div>
-        <div style="font-size:10px;font-weight:800;color:var(--purple2);margin-bottom:6px;letter-spacing:.5px;">TRADE READINESS</div>
-        <div id="readiness-grid" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
-      </div>
 
       <div style="margin-top:14px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -1604,8 +1584,6 @@ async function loadMarketData() {
 // ════════════════════════════════════════════════════════════════════════════
 
 let _cbHoldings  = [];
-let _cbLimits    = {};
-let _cbReadiness = {};
 
 function setCbRefreshUi(loading, message='', ok=true) {
   document.querySelectorAll('.cb-refresh-btn').forEach(btn => {
@@ -1637,8 +1615,6 @@ async function refreshCoinbaseData(btn) {
 async function loadCoinbaseData(force=false) {
   await Promise.all([
     loadCbHoldings(force),
-    loadCbLimits(),
-    loadCbReadiness(),
   ]);
   updateCbSidebar();
 }
@@ -1699,68 +1675,6 @@ async function loadCbHoldings(force=false) {
     const tbody = document.getElementById('cb-holdings-body');
     if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:12px;color:var(--red2);font-size:10px;">${escHtml(e.message || String(e))}</td></tr>`;
   }
-}
-
-async function loadCbLimits() {
-  try {
-    const data = await fetch('/api/crypto/coin-limits', {cache:'no-store'}).then(r=>r.json());
-    _cbLimits = data.limits || {};
-    const grid = document.getElementById('coin-limits-grid');
-    if (!grid) return;
-    const symbols = Object.keys(_cbLimits);
-    if (!symbols.length) {
-      grid.innerHTML = '<div style="color:var(--muted);font-size:10px;">No crypto symbols configured yet.</div>';
-      return;
-    }
-    grid.innerHTML = symbols.map(sym => {
-      const id = 'limit-' + sym.replace('/','_');
-      return `<div class="coin-limit-item">
-        <div class="coin-limit-label">${escHtml(sym)}</div>
-        <div style="display:flex;align-items:center;gap:4px;">
-          <span style="color:var(--muted);font-size:10px;">$</span>
-          <input type="number" id="${id}" class="coin-limit-input" value="${_cbLimits[sym]||200}" min="10" step="10" style="width:85px;">
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) { console.warn('CB limits error', e); }
-}
-
-async function saveCoinLimits() {
-  const grid = document.getElementById('coin-limits-grid');
-  if (!grid) return;
-  const limits = {};
-  Object.keys(_cbLimits).forEach(sym => {
-    const el = document.getElementById('limit-' + sym.replace('/','_'));
-    if (el) limits[sym] = parseFloat(el.value) || 200;
-  });
-  const data = await fetch('/api/crypto/coin-limits',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limits})}).then(r=>r.json());
-  if (data.saved) { toast('Coin limits saved'); _cbLimits = limits; loadCbReadiness(); }
-  else toast('Save failed', false);
-}
-
-async function loadCbReadiness() {
-  try {
-    const data = await fetch('/api/coinbase/readiness?_=' + Date.now(), {cache:'no-store'}).then(r=>r.json());
-    _cbReadiness = data.symbols || {};
-    const grid = document.getElementById('readiness-grid');
-    if (!grid) return;
-    const entries = Object.entries(_cbReadiness);
-    if (!entries.length) {
-      grid.innerHTML = '<div style="color:var(--muted);font-size:10px;">No symbols configured.</div>';
-      return;
-    }
-    grid.innerHTML = entries.map(([sym, info]) => {
-      const dotCls = info.status === 'ready' ? 'ready' : info.status === 'warning' ? 'warn' : 'error';
-      const icon   = info.status === 'ready' ? '✓' : info.status === 'warning' ? '⚠' : '✗';
-      return `<div class="readiness-item" title="${escHtml(info.reason||'')}">
-        <div class="readiness-dot ${dotCls}"></div>
-        <div>
-          <div style="font-weight:700;color:var(--purple3);">${escHtml(sym)}</div>
-          <div style="font-size:9px;color:var(--muted);">${icon} ${escHtml((info.reason||'').slice(0,50))}</div>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) { console.warn('CB readiness error', e); }
 }
 
 function updateCbSidebar() {

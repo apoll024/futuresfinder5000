@@ -10,7 +10,7 @@ Alert thresholds: warn >= 80%, critical >= 92%
 All metrics visible in the dashboard via /api/health endpoint.
 """
 import os, sys, subprocess, json, time
-from datetime import datetime, timedelta
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -198,13 +198,24 @@ def check_data_integrity():
         db = Session()
         issues = []
 
-        # Check for symbols with no bars in the last 30 minutes (market hours heuristic)
+        # Check for symbols with no bars in the last 30 minutes.
+        # Stock markets are only open Mon-Fri 09:30-16:15 ET — skip stock symbols outside those hours.
         cutoff = datetime.utcnow() - timedelta(minutes=30)
         recent_symbols = {r[0] for r in db.query(Bar.symbol).filter(Bar.ts >= cutoff).distinct()}
         all_symbols    = {r[0] for r in db.query(Bar.symbol).distinct()}
         stale = all_symbols - recent_symbols
         if stale:
-            issues.append(f"No recent bars for: {', '.join(sorted(stale)[:5])}")
+            from zoneinfo import ZoneInfo
+            now_et = datetime.now(ZoneInfo("America/New_York"))
+            market_open = (
+                now_et.weekday() < 5
+                and dtime(9, 30) <= now_et.time() <= dtime(16, 15)
+            )
+            # During market hours flag all stale symbols; outside hours only flag crypto (contains /)
+            if not market_open:
+                stale = {s for s in stale if "/" in s}
+            if stale:
+                issues.append(f"No recent bars for: {', '.join(sorted(stale)[:5])}")
 
         # Check for signals with null confidence or action
         bad_signals = (
