@@ -339,7 +339,11 @@ def execute_signal(signal_id: int):
         session.close()
         return
 
-    mode = TRADE_MODE
+    mode = get_setting("trade_mode", TRADE_MODE)
+    if mode == "off":
+        print(f"  [executor] TRADING OFF — blocking {sig.symbol} {sig.action.upper()}")
+        session.close()
+        return
     print(f"  [executor] Mode={mode}  {sig.symbol} {sig.action.upper()}  conf={sig.confidence:.2f}")
 
     if sig.confidence < MIN_CONFIDENCE:
@@ -434,6 +438,10 @@ def execute_crypto_signal(signal_id: int):
 
     # Read mode from DB (live/suggest) — falls back to env var if not set
     mode = get_setting("trade_mode", TRADE_MODE)
+    if mode == "off":
+        print(f"  [executor] TRADING OFF — blocking crypto {sig.symbol} {sig.action.upper()}")
+        session.close()
+        return
     print(f"  [executor] Crypto Mode={mode}  {sig.symbol} {sig.action.upper()}  conf={sig.confidence:.2f}")
 
     if sig.confidence < MIN_CONFIDENCE:

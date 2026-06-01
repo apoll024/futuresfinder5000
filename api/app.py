@@ -572,21 +572,23 @@ def api_toggle_ingest():
         c = client.containers.get("ff_ingest")
         if c.status == "running":
             c.stop(timeout=15)
-            try:
-                d = client.containers.get("ff_digest")
-                if d.status == "running":
-                    d.stop(timeout=10)
-            except Exception:
-                pass
+            for name in ("ff_digest", "ff_crypto"):
+                try:
+                    ct = client.containers.get(name)
+                    if ct.status == "running":
+                        ct.stop(timeout=10)
+                except Exception:
+                    pass
             return jsonify({"running": False, "action": "stopped"})
         else:
             c.start()
-            try:
-                d = client.containers.get("ff_digest")
-                if d.status != "running":
-                    d.start()
-            except Exception:
-                pass
+            for name in ("ff_digest", "ff_crypto"):
+                try:
+                    ct = client.containers.get(name)
+                    if ct.status != "running":
+                        ct.start()
+                except Exception:
+                    pass
             return jsonify({"running": True, "action": "started"})
     except Exception as e:
         if "NotFound" in type(e).__name__:
