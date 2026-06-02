@@ -179,22 +179,26 @@ def pick_option_contract(contracts: list, current_price: float,
 
 
 def _internal_position_qty(symbol: str, session) -> float:
-    """Return net quantity FF5000 itself has bought and not yet sold (our trade DB).
+    """Return net qty FF5000 bought and not yet sold, counting LIVE trades only.
 
-    Used as a phantom-trade guard: Coinbase may report large balances for assets
-    we never purchased through FF5000.  Capping sell qty to our internal position
-    prevents submitting sell orders for phantom holdings.
+    Filters mode=live and qty>0 to exclude Alpaca paper-trade history and
+    rejected zero-qty attempts, ensuring the phantom guard trusts only real
+    Coinbase live buy records.
     """
     from sqlalchemy import func as _func
     bought = session.query(_func.sum(Trade.qty)).filter(
         Trade.symbol == symbol,
         Trade.side   == "buy",
         Trade.status.in_(["filled", "submitted"]),
+        Trade.mode   == "live",
+        Trade.qty    > 0,
     ).scalar() or 0.0
     sold = session.query(_func.sum(Trade.qty)).filter(
         Trade.symbol == symbol,
         Trade.side   == "sell",
         Trade.status.in_(["filled", "submitted"]),
+        Trade.mode   == "live",
+        Trade.qty    > 0,
     ).scalar() or 0.0
     return max(0.0, float(bought) - float(sold))
 
@@ -355,7 +359,11 @@ def execute_crypto_signal(signal_id: int):
                 resp      = place_market_sell(cb_sym, qty)
                 trade.qty = qty
             order_id = _coinbase_order_id(resp)
-            if resp.get("success") is False or resp.get("error_response") or not order_id:
+            success_val = resp.get("success", True)
+            order_failed = (success_val is False or str(success_val).lower() == "false"
+                           or resp.get("failure_reason") or resp.get("error_response")
+                           or not order_id)
+            if order_failed:
                 reason = _coinbase_error(resp)
                 trade.alpaca_id = str(order_id or reason)[:50]
                 trade.status = "rejected"
