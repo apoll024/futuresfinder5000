@@ -547,6 +547,13 @@ def api_toggle_ingest():
                 ct.start()
         except Exception:
             pass
+    # Persist ingest state and reset LLM availability cache
+    set_setting("ingest_enabled", "true" if not running else "false")
+    try:
+        from db.llm_gateway import invalidate_cache as _llm_inv
+        _llm_inv()
+    except Exception:
+        pass
     return jsonify({"running": not running, "action": action})
 
 

@@ -5,6 +5,7 @@ Owns provider calls, budget controls, short-lived caching, health checks, and
 trade-decision review so analysis modules do not call model endpoints directly.
 """
 import hashlib
+from db.models import get_setting as _gs
 import json
 import os
 import time
@@ -104,6 +105,12 @@ def invalidate_cache() -> None:
 
 
 def llm_is_available(force: bool = False) -> bool:
+    # Hard-off when user has disabled data ingestion
+    try:
+        if _gs("ingest_enabled", "true") == "false":
+            return False
+    except Exception:
+        pass
     now = time.time()
     if not force and _health_cache["ok"] is not None and now - _health_cache["ts"] < _HEALTH_TTL:
         return bool(_health_cache["ok"])

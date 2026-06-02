@@ -178,6 +178,27 @@ def pick_option_contract(contracts: list, current_price: float,
 
 
 
+def _internal_position_qty(symbol: str, session) -> float:
+    """Return net quantity FF5000 itself has bought and not yet sold (our trade DB).
+
+    Used as a phantom-trade guard: Coinbase may report large balances for assets
+    we never purchased through FF5000.  Capping sell qty to our internal position
+    prevents submitting sell orders for phantom holdings.
+    """
+    from sqlalchemy import func as _func
+    bought = session.query(_func.sum(Trade.qty)).filter(
+        Trade.symbol == symbol,
+        Trade.side   == "buy",
+        Trade.status.in_(["filled", "submitted"]),
+    ).scalar() or 0.0
+    sold = session.query(_func.sum(Trade.qty)).filter(
+        Trade.symbol == symbol,
+        Trade.side   == "sell",
+        Trade.status.in_(["filled", "submitted"]),
+    ).scalar() or 0.0
+    return max(0.0, float(bought) - float(sold))
+
+
 def execute_crypto_signal(signal_id: int):
     """
     Execute a crypto signal via Coinbase Advanced Trade (primary) or Alpaca (fallback).
@@ -312,6 +333,21 @@ def execute_crypto_signal(signal_id: int):
             else:
                 base = sig.symbol.split("/")[0]
                 qty  = get_crypto_balance(base)
+                # Phantom-trade guard: only sell what FF5000 itself bought
+                internal_qty = _internal_position_qty(sig.symbol, session)
+                if internal_qty < 0.0001:
+                    print(
+                        f"  [executor] PHANTOM GUARD — no internal position for {sig.symbol} "
+                        f"(Coinbase balance: {qty:.6f}) — sell blocked"
+                    )
+                    trade.status = "skipped"
+                    trade.alpaca_id = "phantom-guard"
+                    session.add(trade)
+                    sig.acted_on = True
+                    session.commit()
+                    session.close()
+                    return
+                qty = min(qty, internal_qty)
                 if qty <= 0:
                     print(f"  [executor] No Coinbase balance for {base} — sell skipped")
                     session.close()
